@@ -89,6 +89,57 @@ function LeagueLeaderboards({ league, playerName, season }) {
   );
 }
 
+// ── 3-mode simulation control ─────────────────────────────────────────────────
+function SimControls({ gamesPlayed, onPlayNext, onSimN, onSimAll }) {
+  const [simN, setSimN] = React.useState(5);
+  const remaining = 82 - gamesPlayed;
+
+  return (
+    <div className="space-y-2">
+      {/* Progress bar */}
+      {gamesPlayed > 0 && (
+        <div className="panel-body border border-black">
+          <div className="flex justify-between font-mono text-xs mb-1">
+            <span>Season Progress</span>
+            <span>{gamesPlayed} / 82 games</span>
+          </div>
+          <div className="h-2 bg-gray-200 border border-black">
+            <div className="h-full bg-black transition-all" style={{ width: `${(gamesPlayed / 82) * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Option 1: Play next game */}
+      <button className="btn btn-primary w-full py-3 text-base tracking-widest"
+        onClick={onPlayNext} disabled={remaining <= 0}>
+        ▶ PLAY NEXT GAME {gamesPlayed > 0 ? `(${gamesPlayed + 1} / 82)` : ''}
+      </button>
+
+      {/* Option 2: Simulate N games with slider */}
+      <div className="border border-black p-3 space-y-2">
+        <div className="flex items-center justify-between font-mono text-xs">
+          <span>Simulate <strong>{Math.min(simN, remaining)}</strong> games</span>
+          <span className="text-gray-500">{remaining} remaining</span>
+        </div>
+        <input type="range" min={1} max={Math.max(1, remaining)} value={Math.min(simN, remaining)}
+          onChange={e => setSimN(Number(e.target.value))}
+          className="w-full accent-black" />
+        <button className="btn w-full py-2 text-sm"
+          onClick={onSimN} disabled={remaining <= 0}>
+          ⚡ SIMULATE {Math.min(simN, remaining)} GAME{Math.min(simN, remaining) !== 1 ? 'S' : ''}
+        </button>
+      </div>
+
+      {/* Option 3: Sim all remaining */}
+      {remaining > 1 && (
+        <button className="btn w-full py-2 text-sm" onClick={onSimAll}>
+          ⏩ SIMULATE ALL {remaining} REMAINING GAMES
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function SeasonDashboard() {
   const player = useGameStore(s => s.player);
   const league = useGameStore(s => s.league);
@@ -227,6 +278,7 @@ export default function SeasonDashboard() {
       <TopNav links={[
         { screen: 'MY_PLAYER', label: 'My Player' },
         { screen: 'CAREER', label: 'Stats' },
+        { screen: 'ROSTERS', label: 'Rosters' },
       ]} />
 
       <div className="max-w-5xl mx-auto p-4">
@@ -297,36 +349,12 @@ export default function SeasonDashboard() {
               </div>
             )}
 
-            {/* Game progress bar (when games have been played manually) */}
-            {gamesPlayed > 0 && (
-              <div className="panel">
-                <div className="panel-body">
-                  <div className="flex justify-between font-mono text-xs mb-1">
-                    <span>Games Played</span>
-                    <span>{gamesPlayed} / 82</span>
-                  </div>
-                  <div className="h-2 bg-gray-200 border border-black">
-                    <div className="h-full bg-black" style={{ width: `${(gamesPlayed / 82) * 100}%` }} />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <button
-                className="btn btn-primary py-4 tracking-widest text-base"
-                onClick={handlePlayNextGame}
-                disabled={gamesPlayed >= 82}
-              >
-                ▶ PLAY NEXT GAME {gamesPlayed > 0 ? `(${gamesPlayed + 1}/82)` : ''}
-              </button>
-              <button
-                className="btn py-4 tracking-widest text-base"
-                onClick={handleSimSeason}
-              >
-                ⚡ QUICK SIM {gamesPlayed > 0 ? 'REMAINING' : 'FULL SEASON'}
-              </button>
-            </div>
+            <SimControls
+              gamesPlayed={gamesPlayed}
+              onPlayNext={handlePlayNextGame}
+              onSimN={handleSimSeason}
+              onSimAll={handleSimSeason}
+            />
           </div>
         ) : (
           /* Post-sim view */

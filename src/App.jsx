@@ -12,6 +12,7 @@ import PlayGame from './screens/PlayGame.jsx';
 import Playoffs from './screens/Playoffs.jsx';
 import AwardsScreen from './screens/AwardsScreen.jsx';
 import MyPlayer from './screens/MyPlayer.jsx';
+import LeagueRosters from './screens/LeagueRosters.jsx';
 import EventModal from './components/EventModal.jsx';
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
     PLAYOFFS:         Playoffs,
     AWARDS:           AwardsScreen,
     MY_PLAYER:        MyPlayer,
+    ROSTERS:          LeagueRosters,
   };
 
   const View = views[screen] ?? MainMenu;

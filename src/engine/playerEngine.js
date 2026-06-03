@@ -110,17 +110,70 @@ export function applyOffseasonProgression(player, trainingFocus, minutesPlayed) 
   return newAttrs;
 }
 
-// Compute height bonus for certain attributes (height in inches)
 export function heightBonus(heightIn) {
-  // Average NBA height ~79". Bonus/penalty per inch above/below
   return (heightIn - 79) * 0.8;
 }
-
-// Compute wingspan bonus (wingspan in inches, arm span)
 export function wingspanBonus(wingspanIn, heightIn) {
-  const differential = wingspanIn - heightIn;
-  // Average differential ~2.5". Positive = long arms
-  return (differential - 2.5) * 1.0;
+  return (wingspanIn - heightIn - 2.5) * 1.0;
+}
+
+// ── 2K-style physical attribute modifiers ──────────────────────────────────
+// Applied once at character creation — physical measurements shift attribute
+// ceilings/floors the same way NBA 2K does in MyPLAYER Builder.
+// Baselines: height 79" (6'7"), weight 215 lbs, wingspan = height + 2.5".
+
+export function applyPhysicalModifiers(attrs, heightIn, weightLbs, wingspanIn) {
+  const hDiff = heightIn  - 79;          // inches above/below 6'7"
+  const wDiff = (weightLbs - 215) / 10;  // units of 10 lbs above/below 215
+  const sDiff = (wingspanIn - heightIn) - 2.5; // wingspan reach above average
+
+  const mod = { ...attrs };
+
+  // Height: taller = better rebounding/interior/inside; slower/worse handle
+  mod.rebounding      = clamp(Math.round(attrs.rebounding      + hDiff * 2.2),  25, 99);
+  mod.interiorDefense = clamp(Math.round(attrs.interiorDefense + hDiff * 1.5),  25, 99);
+  mod.insideScoring   = clamp(Math.round(attrs.insideScoring   + hDiff * 1.0),  25, 99);
+  mod.strength        = clamp(Math.round(attrs.strength        + hDiff * 0.6),  25, 99);
+  mod.athleticism     = clamp(Math.round(attrs.athleticism     - hDiff * 1.6),  25, 99);
+  mod.ballHandling    = clamp(Math.round(attrs.ballHandling    - hDiff * 1.0),  25, 99);
+  mod.stamina         = clamp(Math.round(attrs.stamina         - hDiff * 0.7),  25, 99);
+
+  // Weight: heavier = more strength/post; less speed/stamina
+  mod.strength        = clamp(Math.round(mod.strength        + wDiff * 2.5),  25, 99);
+  mod.interiorDefense = clamp(Math.round(mod.interiorDefense + wDiff * 1.0),  25, 99);
+  mod.insideScoring   = clamp(Math.round(mod.insideScoring   + wDiff * 0.5),  25, 99);
+  mod.athleticism     = clamp(Math.round(mod.athleticism     - wDiff * 1.4),  25, 99);
+  mod.stamina         = clamp(Math.round(mod.stamina         - wDiff * 1.8),  25, 99);
+  mod.ballHandling    = clamp(Math.round(mod.ballHandling    - wDiff * 0.6),  25, 99);
+
+  // Wingspan: longer reach = better defense/blocking; negligible speed penalty
+  mod.interiorDefense  = clamp(Math.round(mod.interiorDefense  + sDiff * 2.0), 25, 99);
+  mod.perimeterDefense = clamp(Math.round(attrs.perimeterDefense + sDiff * 1.5), 25, 99);
+  // Wingspan also affects blkBonus in the engine via heightBonus/wingspanBonus
+  // We record it on the player so the bonus carries through sim
+
+  return mod;
+}
+
+// Describe the physical modifier impact for display in character creation
+export function describePhysicalModifiers(heightIn, weightLbs, wingspanIn) {
+  const hDiff = heightIn  - 79;
+  const wDiff = (weightLbs - 215) / 10;
+  const sDiff = (wingspanIn - heightIn) - 2.5;
+  const rows = [];
+
+  const add = (attr, delta) => { if (Math.abs(delta) >= 0.5) rows.push({ attr, delta: Math.round(delta) }); };
+
+  add('Rebounding',       hDiff * 2.2);
+  add('Interior Defense', hDiff * 1.5 + wDiff * 1.0 + sDiff * 2.0);
+  add('Inside Scoring',   hDiff * 1.0 + wDiff * 0.5);
+  add('Strength',         hDiff * 0.6 + wDiff * 2.5);
+  add('Athleticism',     -(hDiff * 1.6 + wDiff * 1.4));
+  add('Ball Handling',   -(hDiff * 1.0 + wDiff * 0.6));
+  add('Stamina',         -(hDiff * 0.7 + wDiff * 1.8));
+  add('Perimeter Defense', sDiff * 1.5);
+
+  return rows.filter(r => r.delta !== 0).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 }
 
 // Check if player should retire

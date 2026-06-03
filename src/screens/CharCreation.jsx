@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useGameStore } from '../store/gameStore.js';
 import { ATTRIBUTES, ATTR_LABELS, ATTR_GROUPS, CREATION_POINTS, ATTR_MIN, ATTR_MAX_CREATION, POSITIONS } from '../data/constants.js';
 import { ARCHETYPES, ARCHETYPE_NAMES } from '../data/archetypes.js';
-import { computeOverall, generatePotential } from '../engine/playerEngine.js';
+import { computeOverall, generatePotential, applyPhysicalModifiers, describePhysicalModifiers } from '../engine/playerEngine.js';
 import { stockToPickRange } from '../engine/draftEngine.js';
 import { computeDraftStock } from '../engine/playerEngine.js';
 
@@ -90,9 +90,17 @@ export default function CharCreation() {
     return stockToPickRange(stock);
   }, [attrs, position]);
 
+  // Physical modifier preview for step 2 display
+  const physicalMods = useMemo(() =>
+    describePhysicalModifiers(height, weight, wingspan),
+    [height, weight, wingspan]
+  );
+
   function handleConfirm() {
     if (!name.trim()) { alert('Enter a name!'); return; }
-    const potential = generatePotential(attrs, archetype);
+    // Apply physical attribute modifiers (2K-style) before saving
+    const physicalAttrs = applyPhysicalModifiers(attrs, height, weight, wingspan);
+    const potential = generatePotential(physicalAttrs, archetype);
     startNewGame({
       name: name.trim(),
       position,
@@ -102,7 +110,7 @@ export default function CharCreation() {
       hand,
       hometown,
       archetype,
-      attributes: { ...attrs },
+      attributes: physicalAttrs,
       potential,
     });
   }
@@ -218,9 +226,22 @@ export default function CharCreation() {
                       className="w-full accent-black" />
                   </div>
                 ))}
-                <div className="font-mono text-xs text-gray-500 mt-1">
-                  Long wingspan (+{Math.max(0, wingspan - height - 2)}") boosts blocks/rebounds · Height helps interior scoring
-                </div>
+                {/* Physical modifier impact */}
+                {physicalMods.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-200">
+                    <div className="font-mono text-xs text-gray-500 uppercase tracking-wider mb-1">Physical Impact on Attributes</div>
+                    <div className="grid grid-cols-2 gap-1">
+                      {physicalMods.map(({ attr, delta }) => (
+                        <div key={attr} className="flex justify-between font-mono text-xs">
+                          <span className="text-gray-600">{attr}</span>
+                          <span className={delta > 0 ? 'font-bold' : 'text-gray-400'}>
+                            {delta > 0 ? '+' : ''}{delta}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

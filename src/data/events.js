@@ -342,6 +342,68 @@ export const EVENT_POOL = [
         effects: { attributes: { stamina: +2, durability: +1 } } },
     ],
   },
+
+  // ── TRADE EVENTS ──────────────────────────────────────────────────────────
+  {
+    id: 'trade_deadline_incoming', title: 'TRADE DEADLINE — INCOMING DEAL', phase: 'season', weight: 4,
+    body: "The front office has pulled off a trade. A veteran star is joining your team. The dynamic in the locker room is about to shift.",
+    choices: [
+      { label: 'Welcome them — this makes us a contender', outcome: 'Immediate chemistry from public support.',
+        effects: { chemistry: +8, coachTrust: +4, fanApproval: +6 } },
+      { label: 'Keep your head down — see how it plays out', outcome: 'Cautious. You wait.',
+        effects: { coachTrust: +2 } },
+      { label: 'Concerned about your role — talk to the coach', outcome: 'Coach reassures you.',
+        effects: { coachTrust: +8, chemistry: +2 } },
+    ],
+  },
+  {
+    id: 'you_get_traded', title: 'YOU HAVE BEEN TRADED', phase: 'season', weight: 3,
+    body: "The call nobody expects. Your team has traded you to a new city. Fresh start — or fresh chaos.",
+    choices: [
+      { label: 'Embrace it — new chapter, new energy', outcome: 'You arrive with a great attitude. New fans love it.',
+        effects: { coachTrust: +15, chemistry: +10, fanApproval: +8, brand: +6 } },
+      { label: 'Focus on basketball — keep emotions private', outcome: 'Professional and quiet.',
+        effects: { coachTrust: +8, attributes: { basketballIQ: +2 } } },
+      { label: 'Publicly question the move', outcome: 'Controversial arrival. Locker room notices.',
+        effects: { coachTrust: -6, fanApproval: -5, brand: +5, personalityRep: -4 } },
+    ],
+  },
+  {
+    id: 'trade_deadline_ship', title: 'TRADE DEADLINE — TEAM RETOOL', phase: 'season', weight: 3,
+    body: "Your team dealt away a key contributor at the deadline. The message is clear: they\'re rebuilding around you.",
+    choices: [
+      { label: 'Step up — take on more responsibility', outcome: 'Usage goes up. So do the expectations.',
+        effects: { coachTrust: +10, fanApproval: +8, attributes: { clutch: +2 } } },
+      { label: 'Play your game — don\'t try to do too much', outcome: 'Steady. Smart.',
+        effects: { coachTrust: +5, attributes: { basketballIQ: +2 } } },
+    ],
+  },
+
+  // ── TEAM CHEMISTRY EVENTS ────────────────────────────────────────────────
+  {
+    id: 'walkthrough_incident', title: 'WALKTHROUGH INCIDENT', phase: 'season', weight: 3,
+    body: "An argument broke out at today\'s shootaround. Two teammates nearly came to blows. Everyone is looking at you to set the tone.",
+    choices: [
+      { label: 'Step in and defuse it — be the leader', outcome: 'Respected. Chemistry recovers fast.',
+        effects: { chemistry: +10, coachTrust: +6, personalityRep: +6 } },
+      { label: 'Let the coaches handle it', outcome: 'Right call. Nothing to do with you.',
+        effects: { chemistry: +2 } },
+      { label: 'Take sides publicly', outcome: 'The locker room fractures.',
+        effects: { chemistry: -12, coachTrust: -4, personalityRep: -4 } },
+    ],
+  },
+  {
+    id: 'bench_reaction', title: 'ON THE BENCH', phase: 'season', weight: 4,
+    body: "You had a tough second quarter and coach made a substitution early. Cameras are on your bench reaction.",
+    choices: [
+      { label: 'Cheer your teammates on visibly', outcome: 'Coach and teammates notice the maturity.',
+        effects: { coachTrust: +8, chemistry: +6, personalityRep: +5 } },
+      { label: 'Stay locked into the game mentally', outcome: 'Come back sharp.',
+        effects: { coachTrust: +4, attributes: { basketballIQ: +1 } } },
+      { label: 'Show frustration — cameras catch it', outcome: 'Narrative forms.',
+        effects: { coachTrust: -8, fanApproval: -5, personalityRep: -6 } },
+    ],
+  },
 ];
 
 // Pick `count` unique events for the given phase, weighted by probability.
