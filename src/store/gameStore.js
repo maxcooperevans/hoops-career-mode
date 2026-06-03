@@ -20,11 +20,12 @@ function createPlayer(data) {
     allStarSelections: 0,
     currentSeasonSimmed: false,
     careerHighs: {
-      // Single-game bests (across all seasons)
       pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
-      // Single-season averages
       ptsAvg: 0, rebAvg: 0, astAvg: 0, stlAvg: 0, blkAvg: 0,
     },
+    playerFocus: 'balanced', // 'balanced'|'scoring'|'playmaking'|'defense'|'rebounding'
+    gamesPlayedThisSeason: 0,
+    currentSeasonGameLog: [],
     coachTrust: 50,
     chemistry: 60,
     fanApproval: 50,
@@ -53,6 +54,8 @@ export const useGameStore = create(
       pendingEvent: null,
       newsItems: [],
       saves: [null, null, null],
+      playoffState: null,
+      currentGameEntry: null,
 
       goTo: (screen) => set(s => { s.screen = screen; }),
 
@@ -263,6 +266,35 @@ export const useGameStore = create(
         s.pendingEvent = null;
       }),
 
+      setPlayerFocus: (focus) => set(s => { s.player.playerFocus = focus; }),
+
+      addGameToLog: (gameLine) => set(s => {
+        s.player.currentSeasonGameLog.push(gameLine);
+        s.player.gamesPlayedThisSeason++;
+      }),
+
+      clearSeasonGameLog: () => set(s => {
+        s.player.currentSeasonGameLog = [];
+        s.player.gamesPlayedThisSeason = 0;
+      }),
+
+      requestTrade: () => set(s => {
+        s.player.coachTrust = Math.max(0, s.player.coachTrust - 12);
+        s.player.chemistry  = Math.max(0, s.player.chemistry  - 8);
+        s.player.personalityRep = Math.max(0, s.player.personalityRep - 5);
+      }),
+
+      requestMoreMinutes: (granted) => set(s => {
+        if (granted) {
+          s.player.coachTrust = Math.min(100, s.player.coachTrust + 5);
+        } else {
+          s.player.coachTrust = Math.max(0, s.player.coachTrust - 3);
+        }
+      }),
+
+      setPlayoffState: (ps) => set(s => { s.playoffState = ps; }),
+      clearPlayoffState: () => set(s => { s.playoffState = null; }),
+
       resetGame: () => set(s => {
         s.screen = 'MAIN_MENU';
         s.player = null;
@@ -270,6 +302,7 @@ export const useGameStore = create(
         s.seasonResults = null;
         s.pendingEvent = null;
         s.newsItems = [];
+        s.playoffState = null;
       }),
     })),
     {

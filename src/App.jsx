@@ -8,21 +8,29 @@ import SeasonDashboard from './screens/SeasonDashboard.jsx';
 import OffseasonHub from './screens/OffseasonHub.jsx';
 import CareerProfile from './screens/CareerProfile.jsx';
 import RetirementScreen from './screens/RetirementScreen.jsx';
+import PlayGame from './screens/PlayGame.jsx';
+import Playoffs from './screens/Playoffs.jsx';
+import AwardsScreen from './screens/AwardsScreen.jsx';
+import MyPlayer from './screens/MyPlayer.jsx';
 import EventModal from './components/EventModal.jsx';
 
 export default function App() {
-  const screen = useGameStore(s => s.screen);
+  const screen       = useGameStore(s => s.screen);
   const pendingEvent = useGameStore(s => s.pendingEvent);
 
   const views = {
-    MAIN_MENU: MainMenu,
-    CHAR_CREATION: CharCreation,
-    COLLEGE: CollegeHub,
-    DRAFT: DraftNight,
+    MAIN_MENU:        MainMenu,
+    CHAR_CREATION:    CharCreation,
+    COLLEGE:          CollegeHub,
+    DRAFT:            DraftNight,
     SEASON_DASHBOARD: SeasonDashboard,
-    OFFSEASON: OffseasonHub,
-    CAREER: CareerProfile,
-    RETIREMENT: RetirementScreen,
+    OFFSEASON:        OffseasonHub,
+    CAREER:           CareerProfile,
+    RETIREMENT:       RetirementScreen,
+    PLAY_GAME:        PlayGame,
+    PLAYOFFS:         Playoffs,
+    AWARDS:           AwardsScreen,
+    MY_PLAYER:        MyPlayer,
   };
 
   const View = views[screen] ?? MainMenu;

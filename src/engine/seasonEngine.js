@@ -46,8 +46,10 @@ function simGameLine(attrs, position, role, mpg, oppStrength) {
   // Wide-range scoring: role sets a floor/ceiling; elite scorers punch above their role.
   // t=0 at scoringRating 40 → floor; t=1 at 99 → ceiling.
   // Franchise + scoringRating 90 ≈ 30 PPG; rotation + scoringRating 80 ≈ 12 PPG.
-  const ROLE_FLOOR_PPG = { franchise: 18, star: 14, starter: 9, sixthman: 7, rotation: 5, bench: 2.5 };
-  const ROLE_CEIL_PPG  = { franchise: 42, star: 32, starter: 22, sixthman: 17, rotation: 14, bench: 9 };
+  // Ceilings calibrated so peak scorers hit ~35 PPG max (Jordan/Kobe territory).
+  // Prevents maxed builds from generating unrealistic 40+ PPG seasons.
+  const ROLE_FLOOR_PPG = { franchise: 16, star: 13, starter: 8, sixthman: 6, rotation: 4, bench: 2 };
+  const ROLE_CEIL_PPG  = { franchise: 35, star: 27, starter: 20, sixthman: 15, rotation: 11, bench: 7 };
   const t = clamp((scoringRating - 40) / (99 - 40), 0, 1);
   const basePPG = (ROLE_FLOOR_PPG[role] + t * (ROLE_CEIL_PPG[role] - ROLE_FLOOR_PPG[role])) * oppFactor;
 

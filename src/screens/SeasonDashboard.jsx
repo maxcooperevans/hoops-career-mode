@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore.js';
 import {
   simPlayerSeason, simLeagueStandings, determineAwards,
   buildSeasonNews, simLeaguePlayerStats,
 } from '../engine/seasonEngine.js';
+import { buildPlayoffBracket } from '../engine/playoffEngine.js';
+import { generateSchedule } from '../engine/gameEngine.js';
 import { pickEvents } from '../data/events.js';
 import { TEAM_MAP, TEAMS } from '../data/teams.js';
 import { computeOverall, shouldRetire } from '../engine/playerEngine.js';
@@ -93,17 +95,19 @@ export default function SeasonDashboard() {
   const seasonResults = useGameStore(s => s.seasonResults);
   const newsItems = useGameStore(s => s.newsItems);
   const finishSeason = useGameStore(s => s.finishSeason);
-  const setLeague = useGameStore(s => s.setLeague);
   const setPendingEvent = useGameStore(s => s.setPendingEvent);
   const addNews = useGameStore(s => s.addNews);
   const goTo = useGameStore(s => s.goTo);
   const retire = useGameStore(s => s.retire);
-  const saveToSlot = useGameStore(s => s.saveToSlot);
+  const setPlayoffState = useGameStore(s => s.setPlayoffState);
+  const clearSeasonGameLog = useGameStore(s => s.clearSeasonGameLog);
 
   // seasonYear is captured once at mount so it doesn't shift after finishSeason increments nbaSeasonsPlayed.
   const [seasonYear] = useState(() => 2025 + player.nbaSeasonsPlayed);
   const [simmed, setSimmed] = useState(player.currentSeasonSimmed ?? false);
   const [simResult, setSimResult] = useState(player.currentSeasonSimmed ? seasonResults : null);
+  const [schedule] = useState(() => generateSchedule(player.team, seasonYear));
+  const gamesPlayed = player.gamesPlayedThisSeason ?? 0;
 
   const team = player.team ? TEAM_MAP[player.team] : null;
   const overall = computeOverall(player.attributes, player.position);
@@ -143,14 +147,18 @@ export default function SeasonDashboard() {
     setSimResult(results);
     setSimmed(true);
 
-    // Queue season events
-    const events = pickEvents('season', 2);
-    if (events.length > 0) {
-      setPendingEvent(events[0]);
-      if (events[1]) {
-        setTimeout(() => setPendingEvent(events[1]), 100);
-      }
-    }
+    // Queue more season events (4 now)
+    const events = pickEvents('season', 4);
+    events.forEach((ev, i) => setTimeout(() => setPendingEvent(ev), i * 150));
+
+    clearSeasonGameLog();
+  }
+
+  function handlePlayNextGame() {
+    const nextGame = schedule[gamesPlayed];
+    if (!nextGame) return;
+    useGameStore.getState().goTo('PLAY_GAME'); // will be called after state set
+    useGameStore.setState(s => { s.currentGameEntry = nextGame; s.screen = 'PLAY_GAME'; });
   }
 
   function handleGoToOffseason() {
@@ -158,9 +166,25 @@ export default function SeasonDashboard() {
       const legacy = computeLegacyScore(player);
       const obituary = generateCareerObituary(player, legacy);
       retire({ ...legacy, obituary });
-    } else {
-      goTo('OFFSEASON');
+      return;
     }
+    // Check if team made playoffs
+    const standings = simResult?.league?.standings ?? league?.standings;
+    if (standings) {
+      const teamRecord = standings[player.team];
+      const confTeams = TEAMS
+        .filter(t => t.conf === (TEAM_MAP[player.team]?.conf ?? 'East'))
+        .map(t => ({ ...t, wins: standings[t.id]?.wins ?? 0 }))
+        .sort((a, b) => b.wins - a.wins);
+      const seed = confTeams.findIndex(t => t.id === player.team) + 1;
+      if (seed >= 1 && seed <= 8) {
+        const bracket = buildPlayoffBracket(standings);
+        setPlayoffState(bracket);
+        goTo('PLAYOFFS');
+        return;
+      }
+    }
+    goTo('OFFSEASON');
   }
 
   const sr = simResult ?? seasonResults;
@@ -201,7 +225,8 @@ export default function SeasonDashboard() {
   return (
     <div className="min-h-screen">
       <TopNav links={[
-        { screen: 'CAREER', label: 'Profile' },
+        { screen: 'MY_PLAYER', label: 'My Player' },
+        { screen: 'CAREER', label: 'Stats' },
       ]} />
 
       <div className="max-w-5xl mx-auto p-4">
@@ -272,12 +297,36 @@ export default function SeasonDashboard() {
               </div>
             )}
 
-            <button
-              className="btn btn-primary w-full py-4 tracking-widest text-lg"
-              onClick={handleSimSeason}
-            >
-              SIMULATE {seasonYear}–{seasonYear + 1} SEASON
-            </button>
+            {/* Game progress bar (when games have been played manually) */}
+            {gamesPlayed > 0 && (
+              <div className="panel">
+                <div className="panel-body">
+                  <div className="flex justify-between font-mono text-xs mb-1">
+                    <span>Games Played</span>
+                    <span>{gamesPlayed} / 82</span>
+                  </div>
+                  <div className="h-2 bg-gray-200 border border-black">
+                    <div className="h-full bg-black" style={{ width: `${(gamesPlayed / 82) * 100}%` }} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <button
+                className="btn btn-primary py-4 tracking-widest text-base"
+                onClick={handlePlayNextGame}
+                disabled={gamesPlayed >= 82}
+              >
+                ▶ PLAY NEXT GAME {gamesPlayed > 0 ? `(${gamesPlayed + 1}/82)` : ''}
+              </button>
+              <button
+                className="btn py-4 tracking-widest text-base"
+                onClick={handleSimSeason}
+              >
+                ⚡ QUICK SIM {gamesPlayed > 0 ? 'REMAINING' : 'FULL SEASON'}
+              </button>
+            </div>
           </div>
         ) : (
           /* Post-sim view */
@@ -335,12 +384,14 @@ export default function SeasonDashboard() {
               </Panel>
             )}
 
-            <div className="flex gap-2">
-              <button className="btn flex-1 py-3" onClick={() => goTo('CAREER')}>View Career</button>
-              <button className="btn btn-primary flex-[2] py-3 tracking-widest" onClick={handleGoToOffseason}>
-                ADVANCE TO OFFSEASON →
-              </button>
+            <div className="grid grid-cols-3 gap-2">
+              <button className="btn py-3 text-sm" onClick={() => goTo('MY_PLAYER')}>My Player</button>
+              <button className="btn py-3 text-sm" onClick={() => goTo('AWARDS')}>Awards</button>
+              <button className="btn py-3 text-sm" onClick={() => goTo('CAREER')}>Full Stats</button>
             </div>
+            <button className="btn btn-primary w-full py-3 tracking-widest" onClick={handleGoToOffseason}>
+              ADVANCE TO PLAYOFFS / OFFSEASON →
+            </button>
           </div>
         )}
       </div>
