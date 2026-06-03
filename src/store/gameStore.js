@@ -272,6 +272,14 @@ export const useGameStore = create(
         s.newsItems = [];
       }),
     })),
-    { name: 'hoops-career-mode-v1' }
+    {
+      name: 'hoops-career-mode-v1',
+      // Always boot to Main Menu regardless of where the player was when they closed the tab.
+      // The active game state (player, league, etc.) is restored, but they choose to continue
+      // from the Main Menu rather than being dropped mid-game unexpectedly.
+      onRehydrateStorage: () => (state) => {
+        if (state) state.screen = 'MAIN_MENU';
+      },
+    }
   )
 );

@@ -12,7 +12,11 @@ export default function TopNav({ links = [] }) {
   return (
     <nav className="border-b border-black px-4 py-2 flex items-center justify-between flex-wrap gap-2">
       <div className="flex items-center gap-4">
-        <span className="font-bold tracking-widest text-xs uppercase">HOOPS: CAREER MODE</span>
+        <button onClick={() => goTo('MAIN_MENU')}
+          className="font-bold tracking-widest text-xs uppercase hover:opacity-60 transition-opacity"
+          title="Main Menu">
+          HOOPS: CAREER MODE
+        </button>
         {links.map(l => (
           <button key={l.screen} onClick={() => goTo(l.screen)}
             className="text-xs uppercase tracking-wider hover:underline">
