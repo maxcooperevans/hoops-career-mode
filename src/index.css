@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-white text-black font-sans;
+    font-size: 14px;
+  }
+
+  /* Stat table base style */
+  .stat-table {
+    @apply font-mono text-xs w-full border-collapse;
+  }
+
+  .stat-table th,
+  .stat-table td {
+    @apply border border-black px-2 py-1 text-right;
+  }
+
+  .stat-table th {
+    @apply font-bold text-left bg-black text-white;
+  }
+
+  .stat-table td:first-child,
+  .stat-table th:first-child {
+    @apply text-left;
+  }
+
+  .stat-table tr:hover td {
+    @apply bg-black text-white;
+  }
+
+  /* Panel / card */
+  .panel {
+    @apply border border-black;
+  }
+
+  .panel-header {
+    @apply border-b border-black px-3 py-2 font-bold uppercase tracking-widest text-xs bg-black text-white;
+  }
+
+  .panel-body {
+    @apply p-3;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply border border-black px-4 py-2 text-sm font-semibold uppercase tracking-wider cursor-pointer bg-white text-black transition-colors;
+  }
+
+  .btn:hover {
+    @apply bg-black text-white;
+  }
+
+  .btn:disabled {
+    @apply opacity-40 cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply bg-black text-white;
+  }
+
+  .btn-primary:hover {
+    @apply bg-white text-black;
+  }
+
+  /* Divider */
+  hr {
+    @apply border-black border-t my-4;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: white;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: black;
+  }
+}

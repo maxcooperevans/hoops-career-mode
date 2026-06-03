@@ -1,0 +1,88 @@
+export const ARCHETYPES = {
+  'Floor General': {
+    description: 'Elite playmaker who controls the game with vision and IQ. Sets up teammates, runs the offense, wins with brains over brawn.',
+    positions: ['PG'],
+    bonusAttrs: { ballHandling: 14, passingVision: 16, basketballIQ: 14, freeThrow: 8 },
+    penaltyAttrs: { insideScoring: -6, rebounding: -6, strength: -6 },
+    growthBoosts: ['passingVision', 'basketballIQ', 'ballHandling'],
+    athleticBase: 62,
+    startingAttrs: {
+      insideScoring: 46, midRange: 60, threePoint: 60, freeThrow: 68,
+      ballHandling: 74, passingVision: 76, perimeterDefense: 58, interiorDefense: 44,
+      rebounding: 44, athleticism: 64, strength: 50, stamina: 66,
+      basketballIQ: 75, durability: 60, clutch: 65,
+    },
+  },
+  'Slasher': {
+    description: 'Explosive athlete who attacks the rim relentlessly. Lives in the paint, creates with speed, finishes through contact.',
+    positions: ['PG', 'SG', 'SF'],
+    bonusAttrs: { athleticism: 16, insideScoring: 14, ballHandling: 10 },
+    penaltyAttrs: { threePoint: -10, interiorDefense: -6, strength: -4 },
+    growthBoosts: ['insideScoring', 'athleticism', 'freeThrow'],
+    athleticBase: 76,
+    startingAttrs: {
+      insideScoring: 76, midRange: 62, threePoint: 44, freeThrow: 62,
+      ballHandling: 70, passingVision: 56, perimeterDefense: 60, interiorDefense: 46,
+      rebounding: 56, athleticism: 78, strength: 62, stamina: 68,
+      basketballIQ: 60, durability: 64, clutch: 64,
+    },
+  },
+  '3-and-D': {
+    description: 'Specialized wing who spaces the floor and locks down opponents. The ultimate team player — does the dirty work so stars can shine.',
+    positions: ['SG', 'SF'],
+    bonusAttrs: { threePoint: 14, perimeterDefense: 14, stamina: 10 },
+    penaltyAttrs: { ballHandling: -8, passingVision: -6, insideScoring: -4 },
+    growthBoosts: ['threePoint', 'perimeterDefense', 'stamina'],
+    athleticBase: 66,
+    startingAttrs: {
+      insideScoring: 52, midRange: 58, threePoint: 72, freeThrow: 66,
+      ballHandling: 52, passingVision: 50, perimeterDefense: 72, interiorDefense: 52,
+      rebounding: 56, athleticism: 66, strength: 60, stamina: 72,
+      basketballIQ: 65, durability: 66, clutch: 58,
+    },
+  },
+  'Stretch Big': {
+    description: 'Floor-spacing big who can step out and shoot. Drags defenders away from the rim, opens the paint for slashers, scores efficiently.',
+    positions: ['PF', 'C'],
+    bonusAttrs: { threePoint: 14, midRange: 12, strength: 10, rebounding: 8 },
+    penaltyAttrs: { athleticism: -8, perimeterDefense: -6, ballHandling: -6 },
+    growthBoosts: ['midRange', 'threePoint', 'strength'],
+    athleticBase: 54,
+    startingAttrs: {
+      insideScoring: 60, midRange: 70, threePoint: 66, freeThrow: 64,
+      ballHandling: 46, passingVision: 48, perimeterDefense: 52, interiorDefense: 62,
+      rebounding: 68, athleticism: 54, strength: 70, stamina: 60,
+      basketballIQ: 62, durability: 64, clutch: 58,
+    },
+  },
+  'Rim Protector': {
+    description: 'Intimidating anchor who guards the paint and crashes the boards. Changes the game on defense, cleans up on offense near the basket.',
+    positions: ['C', 'PF'],
+    bonusAttrs: { interiorDefense: 18, rebounding: 16, strength: 12 },
+    penaltyAttrs: { threePoint: -18, ballHandling: -12, midRange: -6 },
+    growthBoosts: ['interiorDefense', 'rebounding', 'strength'],
+    athleticBase: 60,
+    startingAttrs: {
+      insideScoring: 64, midRange: 46, threePoint: 32, freeThrow: 52,
+      ballHandling: 38, passingVision: 44, perimeterDefense: 52, interiorDefense: 78,
+      rebounding: 76, athleticism: 62, strength: 76, stamina: 62,
+      basketballIQ: 58, durability: 66, clutch: 54,
+    },
+  },
+  'Two-Way Wing': {
+    description: 'Versatile defender and scorer who impacts both ends. The most balanced archetype — can guard multiple positions and score from anywhere.',
+    positions: ['SF', 'SG', 'PF'],
+    bonusAttrs: { perimeterDefense: 12, athleticism: 12, midRange: 8, clutch: 8 },
+    penaltyAttrs: { threePoint: -6, ballHandling: -4, passingVision: -4 },
+    growthBoosts: ['perimeterDefense', 'athleticism', 'midRange'],
+    athleticBase: 70,
+    startingAttrs: {
+      insideScoring: 62, midRange: 64, threePoint: 54, freeThrow: 62,
+      ballHandling: 58, passingVision: 54, perimeterDefense: 72, interiorDefense: 56,
+      rebounding: 58, athleticism: 72, strength: 62, stamina: 68,
+      basketballIQ: 64, durability: 64, clutch: 66,
+    },
+  },
+};
+
+export const ARCHETYPE_NAMES = Object.keys(ARCHETYPES);
