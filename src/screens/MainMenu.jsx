@@ -75,6 +75,18 @@ export default function MainMenu() {
     <div className="min-h-screen flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-lg">
 
+        {/* Home link */}
+        <div className="flex justify-end mb-4">
+          <a
+            href="https://www.maxcooperevans.com"
+            className="btn text-xs py-1 px-3"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            HOME ↗
+          </a>
+        </div>
+
         {/* Title */}
         <div className="text-center mb-8">
           <div className="font-mono text-xs tracking-widest text-gray-400 mb-1 uppercase">NBA Career Simulation</div>
