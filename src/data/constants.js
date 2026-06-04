@@ -2,9 +2,68 @@
 // TUNABLE CONSTANTS — adjust here to balance
 // ─────────────────────────────────────────────
 
-export const CREATION_POINTS = 290;
+export const CREATION_POINTS = 230;
 export const ATTR_MIN = 25;
-export const ATTR_MAX_CREATION = 88; // hard cap at creation (potential can push higher)
+export const ATTR_MAX_CREATION = 88; // global fallback cap (overridden per archetype below)
+
+// ── Per-archetype attribute caps (2K-style) ───────────────────────────────────
+// Each archetype has different ceilings reflecting their role.
+// E.g. a Floor General can hit 96 Ball Handling but only 75 Three-Point.
+// A Rim Protector peaks at 96 Interior Defense / Rebounding but can only reach 65 Three-Point.
+export const ATTR_CAPS_BY_ARCHETYPE = {
+  'Floor General': {
+    insideScoring: 84, midRange: 88, threePoint: 88, freeThrow: 92,
+    ballHandling: 96, passingVision: 96, perimeterDefense: 82, interiorDefense: 74,
+    rebounding: 78, athleticism: 86, strength: 76, stamina: 88,
+    basketballIQ: 96, durability: 88, clutch: 92,
+  },
+  'Slasher': {
+    insideScoring: 96, midRange: 85, threePoint: 75, freeThrow: 86,
+    ballHandling: 90, passingVision: 80, perimeterDefense: 80, interiorDefense: 80,
+    rebounding: 84, athleticism: 96, strength: 86, stamina: 88,
+    basketballIQ: 80, durability: 86, clutch: 88,
+  },
+  '3-and-D': {
+    insideScoring: 80, midRange: 84, threePoint: 96, freeThrow: 88,
+    ballHandling: 78, passingVision: 78, perimeterDefense: 96, interiorDefense: 82,
+    rebounding: 82, athleticism: 86, strength: 80, stamina: 92,
+    basketballIQ: 86, durability: 90, clutch: 82,
+  },
+  'Stretch Big': {
+    insideScoring: 82, midRange: 92, threePoint: 92, freeThrow: 88,
+    ballHandling: 72, passingVision: 78, perimeterDefense: 74, interiorDefense: 80,
+    rebounding: 88, athleticism: 78, strength: 90, stamina: 82,
+    basketballIQ: 86, durability: 86, clutch: 82,
+  },
+  'Rim Protector': {
+    insideScoring: 86, midRange: 74, threePoint: 65, freeThrow: 78,
+    ballHandling: 68, passingVision: 72, perimeterDefense: 78, interiorDefense: 96,
+    rebounding: 96, athleticism: 84, strength: 96, stamina: 86,
+    basketballIQ: 80, durability: 88, clutch: 80,
+  },
+  'Two-Way Wing': {
+    insideScoring: 88, midRange: 88, threePoint: 82, freeThrow: 86,
+    ballHandling: 82, passingVision: 82, perimeterDefense: 92, interiorDefense: 86,
+    rebounding: 86, athleticism: 90, strength: 86, stamina: 88,
+    basketballIQ: 88, durability: 90, clutch: 88,
+  },
+};
+
+// Average NBA height by position (inches) — used for height-based cap adjustments
+export const POSITION_AVG_HEIGHT = { PG: 75, SG: 77, SF: 79, PF: 81, C: 83 };
+
+// Per-inch height modifier to attribute caps (above/below position average)
+// Taller = better interior/rebounding caps, worse guard/speed caps
+export const HEIGHT_CAP_MODS = {
+  insideScoring:    +1.5,
+  interiorDefense:  +2.0,
+  rebounding:       +2.0,
+  strength:         +1.0,
+  athleticism:      -1.5,
+  ballHandling:     -1.5,
+  threePoint:       -1.0,
+  passingVision:    -0.5,
+};
 
 export const ATTRIBUTES = [
   'insideScoring',

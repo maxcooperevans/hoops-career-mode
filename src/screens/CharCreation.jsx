@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useGameStore } from '../store/gameStore.js';
-import { ATTRIBUTES, ATTR_LABELS, ATTR_GROUPS, CREATION_POINTS, ATTR_MIN, ATTR_MAX_CREATION, POSITIONS } from '../data/constants.js';
+import {
+  ATTRIBUTES, ATTR_LABELS, ATTR_GROUPS, CREATION_POINTS, ATTR_MIN, ATTR_MAX_CREATION,
+  POSITIONS, ATTR_CAPS_BY_ARCHETYPE, POSITION_AVG_HEIGHT, HEIGHT_CAP_MODS,
+} from '../data/constants.js';
 import { ARCHETYPES, ARCHETYPE_NAMES } from '../data/archetypes.js';
 import { computeOverall, generatePotential, applyPhysicalModifiers, describePhysicalModifiers } from '../engine/playerEngine.js';
 import { stockToPickRange } from '../engine/draftEngine.js';
@@ -55,6 +58,22 @@ export default function CharCreation() {
     setWeight(170 + (mid - 71) * 4);
   }
 
+  // ── Per-attribute creation caps (archetype + height) ─────────────────────────
+  // Caps vary by archetype (e.g. Slasher can reach 96 Inside Scoring but only 75 Three-Point)
+  // and are further adjusted by how far the player's height deviates from position average.
+  const attrCaps = useMemo(() => {
+    const base = ATTR_CAPS_BY_ARCHETYPE[archetype] ?? {};
+    const avgH = POSITION_AVG_HEIGHT[position] ?? 79;
+    const hDiff = height - avgH;
+    const caps = {};
+    ATTRIBUTES.forEach(attr => {
+      const baseCap = base[attr] ?? ATTR_MAX_CREATION;
+      const hMod = HEIGHT_CAP_MODS[attr] ?? 0;
+      caps[attr] = Math.max(40, Math.min(99, Math.round(baseCap + hDiff * hMod)));
+    });
+    return caps;
+  }, [archetype, position, height]);
+
   // Points are measured as delta from the archetype baseline, not from ATTR_MIN.
   // Starting with archetype defaults = CREATION_POINTS remaining. Spending above defaults costs points.
   const archBaseTotal = useMemo(() =>
@@ -69,9 +88,10 @@ export default function CharCreation() {
 
   // Functional updater: reads from prev state so batched rapid-clicks accumulate correctly.
   function changeAttr(attr, delta) {
+    const cap = attrCaps[attr] ?? ATTR_MAX_CREATION;
     setAttrs(prev => {
       const cur = prev[attr] ?? ATTR_MIN;
-      const next = Math.max(ATTR_MIN, Math.min(ATTR_MAX_CREATION, cur + delta));
+      const next = Math.max(ATTR_MIN, Math.min(cap, cur + delta));
       const cost = next - cur;
       if (cost === 0) return prev;
       // Re-check budget from actual latest state
@@ -193,17 +213,35 @@ export default function CharCreation() {
             <div className="panel">
               <div className="panel-header">ARCHETYPE</div>
               <div className="panel-body space-y-2">
-                {validArchetypes.map(n => (
-                  <button key={n} onClick={() => selectArchetype(n)}
-                    className={`btn w-full text-left flex items-start gap-3 py-3 px-4 ${archetype === n ? 'btn-primary' : ''}`}>
-                    <div>
-                      <div className="font-bold text-sm">{n}</div>
-                      <div className={`text-xs mt-0.5 font-normal ${archetype === n ? 'opacity-80' : 'text-gray-500'}`}>
-                        {ARCHETYPES[n].description}
+                {validArchetypes.map(n => {
+                  const caps = ATTR_CAPS_BY_ARCHETYPE[n] ?? {};
+                  const topCaps = Object.entries(caps)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 3)
+                    .map(([k, v]) => `${ATTR_LABELS[k] ?? k} ${v}`);
+                  const lowCaps = Object.entries(caps)
+                    .sort((a, b) => a[1] - b[1])
+                    .slice(0, 2)
+                    .map(([k, v]) => `${ATTR_LABELS[k] ?? k} ${v}`);
+                  const selected = archetype === n;
+                  return (
+                    <button key={n} onClick={() => selectArchetype(n)}
+                      className={`btn w-full text-left flex items-start gap-3 py-3 px-4 ${selected ? 'btn-primary' : ''}`}>
+                      <div className="w-full">
+                        <div className="font-bold text-sm mb-0.5">{n}</div>
+                        <div className={`text-xs font-normal ${selected ? 'opacity-80' : 'text-gray-500'}`}>
+                          {ARCHETYPES[n].description}
+                        </div>
+                        {selected && (
+                          <div className="mt-1.5 font-mono text-xs grid grid-cols-2 gap-x-4 gap-y-0.5">
+                            <span className={`opacity-70`}>Peaks: {topCaps.join(' · ')}</span>
+                            <span className={`opacity-50`}>Capped: {lowCaps.join(' · ')}</span>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -283,23 +321,33 @@ export default function CharCreation() {
                 <div className="panel-body space-y-2">
                   {groupAttrs.map(attr => {
                     const val = attrs[attr] ?? ATTR_MIN;
-                    const pct = ((val - ATTR_MIN) / (ATTR_MAX_CREATION - ATTR_MIN)) * 100;
+                    const cap = attrCaps[attr] ?? ATTR_MAX_CREATION;
+                    // Progress bar fills relative to this attribute's specific cap
+                    const pct = Math.min(100, ((val - ATTR_MIN) / (cap - ATTR_MIN)) * 100);
+                    const atCap = val >= cap;
                     return (
-                      <div key={attr} className="flex items-center gap-3">
-                        <div className="w-36 font-mono text-xs shrink-0">{ATTR_LABELS[attr]}</div>
+                      <div key={attr} className="flex items-center gap-2">
+                        <div className="w-32 font-mono text-xs shrink-0">{ATTR_LABELS[attr]}</div>
                         <div className="flex-1 h-2 bg-gray-200 border border-black">
-                          <div className="h-full bg-black transition-all" style={{ width: `${pct}%` }} />
+                          <div
+                            className={`h-full transition-all ${atCap ? 'bg-gray-500' : 'bg-black'}`}
+                            style={{ width: `${pct}%` }}
+                          />
                         </div>
+                        {/* Cap label — grayed out when not at cap, highlighted when maxed */}
+                        <span className={`font-mono text-xs w-8 text-right shrink-0 ${atCap ? 'font-bold' : 'text-gray-400'}`}>
+                          /{cap}
+                        </span>
                         <div className="flex items-center gap-0.5">
                           <button className="btn text-xs px-1.5 h-6 leading-none"
                             onClick={() => changeAttr(attr, -5)}>−5</button>
                           <button className="btn text-xs w-6 h-6 p-0 flex items-center justify-center"
                             onClick={() => changeAttr(attr, -1)}>−</button>
                           <span className="font-mono text-sm font-bold w-8 text-center">{val}</span>
-                          <button className="btn text-xs w-6 h-6 p-0 flex items-center justify-center"
-                            onClick={() => changeAttr(attr, +1)}>+</button>
-                          <button className="btn text-xs px-1.5 h-6 leading-none"
-                            onClick={() => changeAttr(attr, +5)}>+5</button>
+                          <button className={`btn text-xs w-6 h-6 p-0 flex items-center justify-center ${atCap ? 'opacity-30' : ''}`}
+                            onClick={() => changeAttr(attr, +1)} disabled={atCap}>+</button>
+                          <button className={`btn text-xs px-1.5 h-6 leading-none ${atCap ? 'opacity-30' : ''}`}
+                            onClick={() => changeAttr(attr, +5)} disabled={atCap}>+5</button>
                         </div>
                       </div>
                     );
