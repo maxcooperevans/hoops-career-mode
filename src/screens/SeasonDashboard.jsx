@@ -479,74 +479,50 @@ export default function SeasonDashboard() {
         )}
       </div>
 
-      {/* Box score modal — click a game in Recent Games to open */}
+      {/* Game result modal — click a game in Recent Games to see your stats */}
       {viewingGame && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4"
           onClick={() => setViewingGame(null)}>
-          <div className="bg-white border-2 border-black max-w-lg w-full max-h-[90vh] overflow-y-auto"
+          <div className="bg-white border-2 border-black max-w-sm w-full"
             onClick={e => e.stopPropagation()}>
-            <div className="panel-header flex justify-between">
-              <span>{viewingGame.won ? '✓ WIN' : '✗ LOSS'} {viewingGame.teamScore}–{viewingGame.oppScore}{viewingGame.isOT ? ' OT' : ''}</span>
-              <button onClick={() => setViewingGame(null)} className="opacity-60 hover:opacity-100">✕</button>
+            <div className="panel-header flex items-center justify-between">
+              <span>
+                {viewingGame.won ? '✓ WIN' : '✗ LOSS'}&nbsp;
+                {viewingGame.teamScore}–{viewingGame.oppScore}
+                {viewingGame.isOT ? ' (OT)' : ''}
+              </span>
+              <button onClick={() => setViewingGame(null)} className="opacity-60 hover:opacity-100 ml-4">✕</button>
             </div>
-            <div className="p-4 space-y-3">
+            <div className="p-4 space-y-4">
               <div className="font-mono text-xs text-gray-500 text-center">
                 Game {viewingGame.gameNum} · vs {viewingGame.opponentName}
               </div>
 
-              {/* Player line */}
-              <div className="border border-black p-3">
-                <div className="font-mono text-xs text-gray-400 mb-2">YOUR LINE</div>
-                <div className="grid grid-cols-5 gap-2 font-mono text-center">
-                  {[['PTS',viewingGame.playerLine?.pts],['REB',viewingGame.playerLine?.reb],
-                    ['AST',viewingGame.playerLine?.ast],['STL',viewingGame.playerLine?.stl],
-                    ['BLK',viewingGame.playerLine?.blk]].map(([l,v]) => (
-                    <div key={l}><div className="text-2xl font-bold">{v ?? '—'}</div>
-                      <div className="text-xs text-gray-500">{l}</div></div>
-                  ))}
-                </div>
-                <div className="font-mono text-xs text-gray-400 text-center mt-2">
-                  {viewingGame.playerLine?.fgm}/{viewingGame.playerLine?.fga} FG ·{' '}
-                  {viewingGame.playerLine?.fg3m}/{viewingGame.playerLine?.fg3a} 3P ·{' '}
-                  {viewingGame.playerLine?.ftm}/{viewingGame.playerLine?.fta} FT
-                </div>
+              {/* Player's own stats — integers only for single games */}
+              <div className="grid grid-cols-5 gap-2 font-mono text-center">
+                {[
+                  ['PTS', Math.round(viewingGame.playerLine?.pts ?? 0)],
+                  ['REB', Math.round(viewingGame.playerLine?.reb ?? 0)],
+                  ['AST', Math.round(viewingGame.playerLine?.ast ?? 0)],
+                  ['STL', Math.round(viewingGame.playerLine?.stl ?? 0)],
+                  ['BLK', Math.round(viewingGame.playerLine?.blk ?? 0)],
+                ].map(([l, v]) => (
+                  <div key={l}>
+                    <div className="text-3xl font-bold">{v}</div>
+                    <div className="text-xs text-gray-500">{l}</div>
+                  </div>
+                ))}
               </div>
 
-              {/* Team box score */}
-              {viewingGame.teamNPCLines?.length > 0 && (
-                <div>
-                  <div className="font-mono text-xs text-gray-400 mb-1">TEAM BOX SCORE — {viewingGame.teamScore} PTS</div>
-                  <table className="stat-table text-xs">
-                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th></tr></thead>
-                    <tbody>
-                      <tr style={{background:'#000',color:'#fff'}}><td className="text-left">★ {player.name}</td>
-                        <td>{player.position}</td><td>{viewingGame.playerLine?.pts}</td>
-                        <td>{viewingGame.playerLine?.reb}</td><td>{viewingGame.playerLine?.ast}</td></tr>
-                      {viewingGame.teamNPCLines.map((p,i)=>(
-                        <tr key={i}><td className="text-left">{p.name}</td><td>{p.pos}</td>
-                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              <div className="font-mono text-xs text-gray-400 text-center border-t border-gray-100 pt-3">
+                {viewingGame.playerLine?.fgm ?? 0}/{viewingGame.playerLine?.fga ?? 0} FG ·{' '}
+                {viewingGame.playerLine?.fg3m ?? 0}/{viewingGame.playerLine?.fg3a ?? 0} 3P ·{' '}
+                {viewingGame.playerLine?.ftm ?? 0}/{viewingGame.playerLine?.fta ?? 0} FT
+              </div>
 
-              {/* Opp box score */}
-              {viewingGame.oppLines?.length > 0 && (
-                <div>
-                  <div className="font-mono text-xs text-gray-400 mb-1">OPPONENT — {viewingGame.oppScore} PTS</div>
-                  <table className="stat-table text-xs">
-                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th></tr></thead>
-                    <tbody>
-                      {viewingGame.oppLines.map((p,i)=>(
-                        <tr key={i}><td className="text-left">{p.name}</td><td>{p.pos}</td>
-                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <button className="btn btn-primary w-full py-2" onClick={() => setViewingGame(null)}>CLOSE</button>
+              <button className="btn btn-primary w-full py-2" onClick={() => setViewingGame(null)}>
+                CLOSE
+              </button>
             </div>
           </div>
         </div>

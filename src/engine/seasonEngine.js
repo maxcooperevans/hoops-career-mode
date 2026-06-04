@@ -407,8 +407,13 @@ export function simSingleGameWithBoxScore(player, team, opponent, role, season) 
   const mpg = clamp(gaussian(ROLE_MPG[role] ?? 20, 2.5), 5, 40);
   const oppStr = clamp(65 + gaussian(0, 12), 42, 96);
 
-  // Player's game line
-  const playerLine = simGameLine(player.attributes, player.position, role, mpg, oppStr, player.archetype);
+  // Player's game line — round STL/BLK to integers (single-game values must be whole numbers)
+  const rawLine = simGameLine(player.attributes, player.position, role, mpg, oppStr, player.archetype);
+  const playerLine = {
+    ...rawLine,
+    stl: Math.round(rawLine.stl),
+    blk: Math.round(rawLine.blk),
+  };
 
   // Team NPC lines
   const teamRoster = generateRoster(team, season);
