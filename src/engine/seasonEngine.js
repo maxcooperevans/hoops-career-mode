@@ -12,7 +12,19 @@ const ROLE_USAGE = {
 // Role-anchored base stats — role sets the realistic floor/ceiling; attributes act as ±40% modifier.
 const ROLE_BASE_PPG = { franchise: 27, star: 21, starter: 13.5, sixthman: 10.5, rotation: 6, bench: 3.5 };
 const ROLE_BASE_REB = { franchise: 7,  star: 5.5, starter: 4.2, sixthman: 3.2, rotation: 2.3, bench: 1.5 };
-const ROLE_BASE_AST = { franchise: 5.5, star: 4.0, starter: 2.8, sixthman: 2.0, rotation: 1.4, bench: 0.8 };
+// AST floors reduced — combined with lower PG astBonus to prevent 18+ APG seasons
+const ROLE_BASE_AST = { franchise: 3.5, star: 3.0, starter: 2.2, sixthman: 1.6, rotation: 1.1, bench: 0.6 };
+
+// Archetype-based stat bonuses — inspired by 2K tendencies
+// Applied as multipliers on top of the base attribute calculations
+const ARCHETYPE_STAT_MODS = {
+  'Floor General':  { astMult: 1.30, stlMult: 1.10, ptsMult: 0.95, efficiency: 1.08 },
+  'Slasher':        { ptsMult: 1.20, ftMult: 1.25,  rebMult: 1.05, astMult: 0.90 },
+  '3-and-D':        { stlMult: 1.35, ptsMult: 1.05, threeMult: 1.20, astMult: 0.85 },
+  'Stretch Big':    { threeMult: 1.40, ptsMult: 1.05, rebMult: 0.85, astMult: 1.10 },
+  'Rim Protector':  { blkMult: 1.60, rebMult: 1.40, ptsMult: 0.90, stlMult: 0.90 },
+  'Two-Way Wing':   { stlMult: 1.25, blkMult: 1.15, ptsMult: 1.00, rebMult: 1.05 },
+};
 
 export function determineRole(playerOverall, teamStrength, nbaSeasonsPlayed, coachTrust) {
   const trust = (coachTrust - 50) / 50;
@@ -33,7 +45,7 @@ function sRound(x) {
   return Math.random() < (x - fl) ? fl + 1 : fl;
 }
 
-function simGameLine(attrs, position, role, mpg, oppStrength) {
+function simGameLine(attrs, position, role, mpg, oppStrength, archetype = null) {
   const pw = POSITION_WEIGHTS[position];
   const minFactor = mpg / 36;
   const oppFactor = 1 + (50 - oppStrength) * 0.006;
@@ -78,21 +90,24 @@ function simGameLine(attrs, position, role, mpg, oppStrength) {
 
   const pts = 2 * fg2m + 3 * fg3m + ftm;
 
+  // Archetype multipliers (2K-style: archetype biases how stats manifest)
+  const am = (archetype && ARCHETYPE_STAT_MODS[archetype]) ? ARCHETYPE_STAT_MODS[archetype] : {};
+
   // Rebounds
-  const rebMult = clamp(0.5 + 1.0 * (attrs.rebounding / 99), 0.4, 1.6) * pw.rebBonus;
+  const rebMult = clamp(0.5 + 1.0 * (attrs.rebounding / 99), 0.4, 1.6) * pw.rebBonus * (am.rebMult ?? 1.0);
   const rebBase = ROLE_BASE_REB[role] * rebMult * minFactor / 0.75;
   const reb = Math.max(0, sRound(gaussian(rebBase, Math.max(0.5, rebBase * 0.32))));
 
-  // Assists
-  const astMult = clamp(0.5 + 1.0 * (attrs.passingVision / 99), 0.4, 1.6) * pw.astBonus;
+  // Assists — astBonus in constants.js reduced (PG 1.65→1.10) to prevent 18+ APG
+  const astMult = clamp(0.5 + 1.0 * (attrs.passingVision / 99), 0.4, 1.6) * pw.astBonus * (am.astMult ?? 1.0);
   const astBase = ROLE_BASE_AST[role] * astMult * minFactor / 0.75;
   const ast = Math.max(0, sRound(gaussian(astBase, Math.max(0.4, astBase * 0.38))));
 
-  // Steals & Blocks
-  const stlBase = (attrs.perimeterDefense / 99) * 2.0 * minFactor;
+  // Steals & Blocks — archetype-boosted
+  const stlBase = (attrs.perimeterDefense / 99) * 2.0 * minFactor * (am.stlMult ?? 1.0);
   const stl = Math.max(0, Math.round(gaussian(stlBase, 0.5) * 10) / 10);
 
-  const blkBase = Math.pow(attrs.interiorDefense / 99, 1.2) * pw.blkBonus * 2.4 * minFactor;
+  const blkBase = Math.pow(attrs.interiorDefense / 99, 1.2) * pw.blkBonus * 2.4 * minFactor * (am.blkMult ?? 1.0);
   const blk = Math.max(0, Math.round(gaussian(blkBase, 0.4) * 10) / 10);
 
   // Turnovers
@@ -149,7 +164,7 @@ export function simPlayerSeason(player, team, season) {
 
   for (let g = 0; g < gamesPlayed; g++) {
     const oppStr = clamp(avgOppStrength + gaussian(0, 14), 42, 96);
-    gameLines.push(simGameLine(player.attributes, player.position, role, mpg, oppStr));
+    gameLines.push(simGameLine(player.attributes, player.position, role, mpg, oppStr, player.archetype));
   }
 
   const sorted = [...gameLines].sort((a, b) => b.pts - a.pts);
@@ -216,24 +231,30 @@ export function simLeaguePlayerStats(teams, season, playerEntry) {
                  : npc.isStarter ? 'starter'
                  : 'rotation';
 
-      // Calibrated PPG: role sets the floor/ceiling, ovr is a ±30% modifier.
-      // Realistic ranges: franchise 20-30, star 15-24, starter 10-17, rotation 5-10.
-      const NPC_PPG_FLOOR = { franchise: 18, star: 14, starter: 9,  rotation: 4 };
-      const NPC_PPG_CEIL  = { franchise: 30, star: 24, starter: 17, rotation: 10 };
+      // Varied stats based on role, ovr, and position — large gaussian std for realism
+      const NPC_PPG_FLOOR = { franchise: 18, star: 14, starter: 9, rotation: 3 };
+      const NPC_PPG_CEIL  = { franchise: 30, star: 24, starter: 17, rotation: 9 };
       const ppgT = clamp((ovr - 55) / (97 - 55), 0, 1);
       const ppgBase = NPC_PPG_FLOOR[role] + ppgT * (NPC_PPG_CEIL[role] - NPC_PPG_FLOOR[role]);
+      // High variance ensures starters range from 8–19 PPG, not all same
+      const ppg = Math.max(0, Math.round((ppgBase + gaussian(0, 3.5)) * 10) / 10);
 
-      const ppg = Math.max(0, Math.round((ppgBase + gaussian(0, 1.5)) * 10) / 10);
-      const rpg = Math.max(0, Math.round(
-        (ROLE_BASE_REB[role] * posW.rebMult + gaussian(0, 0.8)) * 10) / 10);
-      const apg = Math.max(0, Math.round(
-        (ROLE_BASE_AST[role] * posW.astMult + gaussian(0, 0.5)) * 10) / 10);
-      const spg = Math.max(0, Math.round(gaussian(0.8 + (ovr - 65) * 0.012, 0.25) * 10) / 10);
-      const bpg = Math.max(0, Math.round(
-        gaussian((npc.pos === 'C' ? 1.5 : npc.pos === 'PF' ? 0.8 : 0.3) + (ovr - 70) * 0.015, 0.25) * 10) / 10);
-      const gp  = Math.min(82, Math.max(40, Math.round(gaussian(74, 6))));
-      const fgp = Math.round(clamp(42 + (ovr - 70) * 0.2 + gaussian(0, 1.5), 32, 62) * 10) / 10;
-      const fg3p = Math.round(clamp(33 + (ovr - 60) * 0.15 + gaussian(0, 2), 25, 47) * 10) / 10;
+      // REB varies heavily by position (bigs get 8-12, guards get 2-5)
+      const posRebBase = { PG: 2.5, SG: 3.2, SF: 5.0, PF: 7.2, C: 9.5 };
+      const rpgBase = (posRebBase[npc.pos] ?? 4) * (0.7 + 0.5 * ppgT);
+      const rpg = Math.max(0, Math.round((rpgBase + gaussian(0, 1.8)) * 10) / 10);
+
+      // AST varies by position (PGs get 5-10, bigs get 1-3)
+      const posAstBase = { PG: 5.5, SG: 2.8, SF: 2.2, PF: 1.8, C: 1.4 };
+      const apgBase = (posAstBase[npc.pos] ?? 2) * (0.6 + 0.6 * ppgT);
+      const apg = Math.max(0, Math.round((apgBase + gaussian(0, 1.2)) * 10) / 10);
+
+      const spg = Math.max(0, Math.round(gaussian(0.7 + (ovr - 65) * 0.01 + (npc.pos === 'PG' ? 0.4 : 0), 0.35) * 10) / 10);
+      const bpg = Math.max(0, Math.round(gaussian(
+        (npc.pos === 'C' ? 1.8 : npc.pos === 'PF' ? 0.9 : 0.3) * (0.7 + 0.5 * ppgT), 0.4) * 10) / 10);
+      const gp  = Math.min(82, Math.max(35, Math.round(gaussian(72, 8))));
+      const fgp = Math.round(clamp(42 + (ovr - 70) * 0.2 + gaussian(0, 2.5), 30, 64) * 10) / 10;
+      const fg3p = Math.round(clamp(33 + (ovr - 60) * 0.12 + gaussian(0, 3.5), 22, 50) * 10) / 10;
 
       leaguePlayers.push({ id: npc.id, name: npc.name, team: team.id, pos: npc.pos,
                            age: npc.age, ovr, ppg, rpg, apg, spg, bpg, gp, fgp, fg3p });
@@ -376,4 +397,72 @@ export function buildSeasonNews(playerSeason, awards, standings, playerTeamId, p
   }
 
   return news;
+}
+
+// ── Single-game simulation with full box score ────────────────────────────────
+// Returns a game result with player line, team box score, and opponent box score.
+// Team/opp individual pts sum to the final team score so box scores are consistent.
+
+export function simSingleGameWithBoxScore(player, team, opponent, role, season) {
+  const mpg = clamp(gaussian(ROLE_MPG[role] ?? 20, 2.5), 5, 40);
+  const oppStr = clamp(65 + gaussian(0, 12), 42, 96);
+
+  // Player's game line
+  const playerLine = simGameLine(player.attributes, player.position, role, mpg, oppStr, player.archetype);
+
+  // Team NPC lines
+  const teamRoster = generateRoster(team, season);
+  const teamNPCs = teamRoster.filter(p => p.isStarter || p.isStar).slice(0, 8);
+  const teamNPCLines = teamNPCs.map((p) => {
+    const pRole = p.isStar ? 'star' : p.isStarter ? 'starter' : 'rotation';
+    const pMpg = p.isStar ? 30 : p.isStarter ? 24 : 14;
+    const pPts = Math.max(0, Math.round(gaussian(p.overall * 0.24, 5)));
+    const posReb = { PG: 2, SG: 3, SF: 5, PF: 7, C: 9 };
+    const posAst = { PG: 5, SG: 2, SF: 2, PF: 1, C: 1 };
+    const pReb = Math.max(0, Math.round(gaussian(posReb[p.pos] ?? 4, 2)));
+    const pAst = Math.max(0, Math.round(gaussian(posAst[p.pos] ?? 2, 1.5)));
+    const pFga = pPts > 0 ? Math.max(pPts > 0 ? 1 : 0, Math.round(pPts / 2.2)) : 0;
+    const pFgm = Math.round(pFga * 0.44);
+    return { name: p.name, pos: p.pos, pts: pPts, reb: pReb, ast: pAst,
+             fgm: pFgm, fga: pFga, stl: Math.random() < 0.15 ? 1 : 0, blk: Math.random() < 0.10 ? 1 : 0 };
+  });
+
+  // Total team pts = player + NPCs + bench contribution
+  const npcTotal = teamNPCLines.reduce((s, p) => s + p.pts, 0);
+  const benchPts = Math.round(gaussian(14, 4));
+  const rawTeamScore = playerLine.pts + npcTotal + benchPts;
+
+  // Opponent score based on strength differential
+  const strengthDiff = (team.strength - opponent.strength) * 0.2;
+  const baseScore = clamp(rawTeamScore, 85, 130);
+  let oppScore = Math.round(clamp(baseScore - strengthDiff + gaussian(0, 8), 78, 140));
+  let teamScore = rawTeamScore;
+
+  // Resolve ties with OT
+  let isOT = false;
+  if (teamScore === oppScore) {
+    isOT = true;
+    teamScore += Math.round(gaussian(5, 3));
+    oppScore  += Math.round(gaussian(5, 3));
+    if (teamScore === oppScore) (Math.random() > 0.5 ? teamScore++ : oppScore++);
+  }
+
+  // Opponent box score
+  const oppRoster = generateRoster(opponent, season);
+  const oppLines = oppRoster.filter(p => p.isStarter || p.isStar).slice(0, 8).map(p => {
+    const pPts = Math.max(0, Math.round(gaussian(p.overall * 0.22, 5)));
+    const posReb = { PG: 2, SG: 3, SF: 5, PF: 7, C: 9 };
+    const posAst = { PG: 5, SG: 2, SF: 2, PF: 1, C: 1 };
+    return { name: p.name, pos: p.pos, pts: pPts,
+             reb: Math.max(0, Math.round(gaussian(posReb[p.pos] ?? 4, 1.8))),
+             ast: Math.max(0, Math.round(gaussian(posAst[p.pos] ?? 2, 1.2))) };
+  });
+
+  return {
+    playerLine, teamNPCLines, oppLines,
+    teamScore, oppScore,
+    won: teamScore > oppScore, isOT,
+    opponent: opponent.id, opponentName: `${opponent.city} ${opponent.name}`,
+    teamName: `${team.city} ${team.name}`,
+  };
 }

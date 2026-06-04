@@ -160,11 +160,12 @@ export default function AwardsScreen() {
                 <span className="text-gray-500">Champion</span>
                 <span className="font-bold">{champion.city} {champion.name}</span>
               </div>
-              {finalsMVP && (
+              {finalsMVP && finalsMVP.name && (
                 <div className="flex justify-between">
                   <span className="text-gray-500">Finals MVP</span>
-                  <span className={`font-bold ${isYou(finalsMVP) ? '' : ''}`}>
-                    {isYou(finalsMVP) ? `★ ${player.name}` : finalsMVP.name} · {finalsMVP.ppg} PPG
+                  <span className="font-bold">
+                    {isYou(finalsMVP) ? `★ ${player.name}` : finalsMVP.name}
+                    {finalsMVP.ppg != null ? ` · ${finalsMVP.ppg} PPG` : ''}
                   </span>
                 </div>
               )}

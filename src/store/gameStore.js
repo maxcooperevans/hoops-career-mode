@@ -56,6 +56,8 @@ export const useGameStore = create(
       saves: [null, null, null],
       playoffState: null,
       currentGameEntry: null,
+      tradeLog: [],
+      recentGameResults: [],  // last N individual game results for box score viewing
 
       goTo: (screen) => set(s => { s.screen = screen; }),
 
@@ -268,14 +270,28 @@ export const useGameStore = create(
 
       setPlayerFocus: (focus) => set(s => { s.player.playerFocus = focus; }),
 
+      addTradeToLog: (trade) => set(s => {
+        if (!s.tradeLog) s.tradeLog = [];
+        s.tradeLog.push({ ...trade, season: s.player?.nbaSeasonsPlayed ?? 0 });
+      }),
+      clearTradeLog: () => set(s => { s.tradeLog = []; }),
+
       addGameToLog: (gameLine) => set(s => {
+        if (!s.player.currentSeasonGameLog) s.player.currentSeasonGameLog = [];
         s.player.currentSeasonGameLog.push(gameLine);
-        s.player.gamesPlayedThisSeason++;
+        s.player.gamesPlayedThisSeason = (s.player.gamesPlayedThisSeason ?? 0) + 1;
+      }),
+
+      addRecentGameResult: (result) => set(s => {
+        if (!s.recentGameResults) s.recentGameResults = [];
+        s.recentGameResults.unshift(result);
+        if (s.recentGameResults.length > 10) s.recentGameResults.pop();
       }),
 
       clearSeasonGameLog: () => set(s => {
         s.player.currentSeasonGameLog = [];
         s.player.gamesPlayedThisSeason = 0;
+        s.recentGameResults = [];
       }),
 
       requestTrade: () => set(s => {

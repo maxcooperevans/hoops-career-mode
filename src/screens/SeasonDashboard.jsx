@@ -1,18 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useGameStore } from '../store/gameStore.js';
 import {
   simPlayerSeason, simLeagueStandings, determineAwards,
-  buildSeasonNews, simLeaguePlayerStats,
+  buildSeasonNews, simLeaguePlayerStats, simSingleGameWithBoxScore,
+  determineRole,
 } from '../engine/seasonEngine.js';
 import { buildPlayoffBracket } from '../engine/playoffEngine.js';
-import { generateSchedule } from '../engine/gameEngine.js';
 import { pickEvents } from '../data/events.js';
 import { TEAM_MAP, TEAMS } from '../data/teams.js';
 import { computeOverall, shouldRetire } from '../engine/playerEngine.js';
 import { computeLegacyScore, generateCareerObituary } from '../engine/legacyEngine.js';
 import TopNav from '../components/TopNav.jsx';
 import Panel from '../components/Panel.jsx';
-import StatTable from '../components/StatTable.jsx';
 
 function fmtSalary(n) {
   return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -90,7 +89,8 @@ function LeagueLeaderboards({ league, playerName, season }) {
 }
 
 // ── 3-mode simulation control ─────────────────────────────────────────────────
-function SimControls({ gamesPlayed, onPlayNext, onSimN, onSimAll }) {
+// No "Play Next Game" — live game mode removed. Three pure simulation options.
+function SimControls({ gamesPlayed, onSimN, onSimAll }) {
   const [simN, setSimN] = React.useState(5);
   const remaining = 82 - gamesPlayed;
 
@@ -98,10 +98,10 @@ function SimControls({ gamesPlayed, onPlayNext, onSimN, onSimAll }) {
     <div className="space-y-2">
       {/* Progress bar */}
       {gamesPlayed > 0 && (
-        <div className="panel-body border border-black">
-          <div className="flex justify-between font-mono text-xs mb-1">
+        <div className="p-3 border border-black space-y-1">
+          <div className="flex justify-between font-mono text-xs">
             <span>Season Progress</span>
-            <span>{gamesPlayed} / 82 games</span>
+            <span className="font-bold">{gamesPlayed} / 82 games played</span>
           </div>
           <div className="h-2 bg-gray-200 border border-black">
             <div className="h-full bg-black transition-all" style={{ width: `${(gamesPlayed / 82) * 100}%` }} />
@@ -109,31 +109,25 @@ function SimControls({ gamesPlayed, onPlayNext, onSimN, onSimAll }) {
         </div>
       )}
 
-      {/* Option 1: Play next game */}
-      <button className="btn btn-primary w-full py-3 text-base tracking-widest"
-        onClick={onPlayNext} disabled={remaining <= 0}>
-        ▶ PLAY NEXT GAME {gamesPlayed > 0 ? `(${gamesPlayed + 1} / 82)` : ''}
-      </button>
-
-      {/* Option 2: Simulate N games with slider */}
+      {/* Option 1: Simulate N games (slider) — calls onSimN(n) with exact count */}
       <div className="border border-black p-3 space-y-2">
         <div className="flex items-center justify-between font-mono text-xs">
-          <span>Simulate <strong>{Math.min(simN, remaining)}</strong> games</span>
+          <span>Simulate <strong>{Math.min(simN, remaining)}</strong> game{Math.min(simN, remaining) !== 1 ? 's' : ''}</span>
           <span className="text-gray-500">{remaining} remaining</span>
         </div>
         <input type="range" min={1} max={Math.max(1, remaining)} value={Math.min(simN, remaining)}
           onChange={e => setSimN(Number(e.target.value))}
           className="w-full accent-black" />
-        <button className="btn w-full py-2 text-sm"
-          onClick={onSimN} disabled={remaining <= 0}>
+        <button className="btn btn-primary w-full py-2 text-sm"
+          onClick={() => onSimN(Math.min(simN, remaining))} disabled={remaining <= 0}>
           ⚡ SIMULATE {Math.min(simN, remaining)} GAME{Math.min(simN, remaining) !== 1 ? 'S' : ''}
         </button>
       </div>
 
-      {/* Option 3: Sim all remaining */}
-      {remaining > 1 && (
+      {/* Option 2: Sim all remaining (full-season quick sim) */}
+      {remaining > 0 && (
         <button className="btn w-full py-2 text-sm" onClick={onSimAll}>
-          ⏩ SIMULATE ALL {remaining} REMAINING GAMES
+          ⏩ SIMULATE ALL {remaining} REMAINING &amp; END SEASON
         </button>
       )}
     </div>
@@ -152,13 +146,26 @@ export default function SeasonDashboard() {
   const retire = useGameStore(s => s.retire);
   const setPlayoffState = useGameStore(s => s.setPlayoffState);
   const clearSeasonGameLog = useGameStore(s => s.clearSeasonGameLog);
+  const addGameToLog = useGameStore(s => s.addGameToLog);
+  const addRecentGameResult = useGameStore(s => s.addRecentGameResult);
+  const recentGameResults = useGameStore(s => s.recentGameResults) ?? [];
+  const tradeLog = useGameStore(s => s.tradeLog) ?? [];
 
-  // seasonYear is captured once at mount so it doesn't shift after finishSeason increments nbaSeasonsPlayed.
   const [seasonYear] = useState(() => 2025 + player.nbaSeasonsPlayed);
   const [simmed, setSimmed] = useState(player.currentSeasonSimmed ?? false);
   const [simResult, setSimResult] = useState(player.currentSeasonSimmed ? seasonResults : null);
-  const [schedule] = useState(() => generateSchedule(player.team, seasonYear));
+  const [viewingGame, setViewingGame] = useState(null); // box score modal
   const gamesPlayed = player.gamesPlayedThisSeason ?? 0;
+
+  // Generate a schedule (used for opponent selection per game)
+  const [schedule] = useState(() => {
+    const opps = [...TEAMS.filter(t => t.id !== player.team)];
+    const sched = [];
+    opps.forEach(o => { sched.push(o); sched.push(o); if (Math.random() < 0.5) sched.push(o); });
+    while (sched.length > 82) sched.splice(Math.floor(Math.random() * sched.length), 1);
+    while (sched.length < 82) sched.push(opps[Math.floor(Math.random() * opps.length)]);
+    return sched.sort(() => Math.random() - 0.5);
+  });
 
   const team = player.team ? TEAM_MAP[player.team] : null;
   const overall = computeOverall(player.attributes, player.position);
@@ -205,11 +212,27 @@ export default function SeasonDashboard() {
     clearSeasonGameLog();
   }
 
-  function handlePlayNextGame() {
-    const nextGame = schedule[gamesPlayed];
-    if (!nextGame) return;
-    useGameStore.getState().goTo('PLAY_GAME'); // will be called after state set
-    useGameStore.setState(s => { s.currentGameEntry = nextGame; s.screen = 'PLAY_GAME'; });
+  // Simulate exactly N individual games (NOT the full season sim)
+  function handleSimNGames(n) {
+    if (!team) return;
+    const remaining = 82 - gamesPlayed;
+    const count = Math.min(n, remaining);
+    if (count <= 0) return;
+
+    const overall = computeOverall(player.attributes, player.position);
+    const role = determineRole(overall, team.strength, player.nbaSeasonsPlayed, player.coachTrust);
+
+    for (let i = 0; i < count; i++) {
+      const opp = schedule[(gamesPlayed + i) % schedule.length] ?? TEAMS[i % TEAMS.length];
+      const gameResult = simSingleGameWithBoxScore(player, team, opp, role, seasonYear);
+      addGameToLog(gameResult.playerLine);
+      addRecentGameResult({ ...gameResult, gameNum: gamesPlayed + i + 1 });
+      addNews({
+        type: 'game',
+        headline: `${gameResult.won ? '✓ W' : '✗ L'} ${gameResult.teamScore}–${gameResult.oppScore} vs ${gameResult.opponentName} — ${gameResult.playerLine.pts} PTS`,
+        date: `Game ${gamesPlayed + i + 1}`,
+      });
+    }
   }
 
   function handleGoToOffseason() {
@@ -228,12 +251,11 @@ export default function SeasonDashboard() {
         .map(t => ({ ...t, wins: standings[t.id]?.wins ?? 0 }))
         .sort((a, b) => b.wins - a.wins);
       const seed = confTeams.findIndex(t => t.id === player.team) + 1;
-      if (seed >= 1 && seed <= 8) {
-        const bracket = buildPlayoffBracket(standings);
-        setPlayoffState(bracket);
-        goTo('PLAYOFFS');
-        return;
-      }
+      // Always show playoffs screen — either to compete or just watch who wins
+      const bracket = buildPlayoffBracket(standings);
+      setPlayoffState(bracket);
+      goTo('PLAYOFFS');
+      return;
     }
     goTo('OFFSEASON');
   }
@@ -351,10 +373,30 @@ export default function SeasonDashboard() {
 
             <SimControls
               gamesPlayed={gamesPlayed}
-              onPlayNext={handlePlayNextGame}
-              onSimN={handleSimSeason}
+              onSimN={handleSimNGames}
               onSimAll={handleSimSeason}
             />
+
+            {/* Recent game results — click for box score */}
+            {recentGameResults.length > 0 && (
+              <Panel title="RECENT GAMES">
+                <div className="space-y-0.5">
+                  {recentGameResults.slice(0, 8).map((g, i) => (
+                    <div key={i}
+                      className="flex items-center justify-between font-mono text-xs py-1 border-b border-gray-100 last:border-0 cursor-pointer hover:bg-gray-50"
+                      onClick={() => setViewingGame(g)}>
+                      <span className={g.won ? 'font-bold' : 'text-gray-500'}>
+                        {g.won ? '✓ W' : '✗ L'} {g.teamScore}–{g.oppScore}
+                      </span>
+                      <span className="text-gray-500 truncate mx-2">{g.opponentName}</span>
+                      <span className="font-bold shrink-0">
+                        {g.playerLine?.pts}p {g.playerLine?.reb}r {g.playerLine?.ast}a
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            )}
           </div>
         ) : (
           /* Post-sim view */
@@ -417,12 +459,98 @@ export default function SeasonDashboard() {
               <button className="btn py-3 text-sm" onClick={() => goTo('AWARDS')}>Awards</button>
               <button className="btn py-3 text-sm" onClick={() => goTo('CAREER')}>Full Stats</button>
             </div>
+            {/* Trades panel */}
+            {tradeLog.length > 0 && (
+              <Panel title="TRADE DEADLINE MOVES">
+                <div className="space-y-1 font-mono text-xs">
+                  {tradeLog.map((t, i) => (
+                    <div key={i} className="border-b border-gray-100 pb-1 last:border-0">
+                      {t.headline ?? `Trade: ${t.player ?? '—'}`}
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            )}
+
             <button className="btn btn-primary w-full py-3 tracking-widest" onClick={handleGoToOffseason}>
               ADVANCE TO PLAYOFFS / OFFSEASON →
             </button>
           </div>
         )}
       </div>
+
+      {/* Box score modal — click a game in Recent Games to open */}
+      {viewingGame && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4"
+          onClick={() => setViewingGame(null)}>
+          <div className="bg-white border-2 border-black max-w-lg w-full max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <div className="panel-header flex justify-between">
+              <span>{viewingGame.won ? '✓ WIN' : '✗ LOSS'} {viewingGame.teamScore}–{viewingGame.oppScore}{viewingGame.isOT ? ' OT' : ''}</span>
+              <button onClick={() => setViewingGame(null)} className="opacity-60 hover:opacity-100">✕</button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="font-mono text-xs text-gray-500 text-center">
+                Game {viewingGame.gameNum} · vs {viewingGame.opponentName}
+              </div>
+
+              {/* Player line */}
+              <div className="border border-black p-3">
+                <div className="font-mono text-xs text-gray-400 mb-2">YOUR LINE</div>
+                <div className="grid grid-cols-5 gap-2 font-mono text-center">
+                  {[['PTS',viewingGame.playerLine?.pts],['REB',viewingGame.playerLine?.reb],
+                    ['AST',viewingGame.playerLine?.ast],['STL',viewingGame.playerLine?.stl],
+                    ['BLK',viewingGame.playerLine?.blk]].map(([l,v]) => (
+                    <div key={l}><div className="text-2xl font-bold">{v ?? '—'}</div>
+                      <div className="text-xs text-gray-500">{l}</div></div>
+                  ))}
+                </div>
+                <div className="font-mono text-xs text-gray-400 text-center mt-2">
+                  {viewingGame.playerLine?.fgm}/{viewingGame.playerLine?.fga} FG ·{' '}
+                  {viewingGame.playerLine?.fg3m}/{viewingGame.playerLine?.fg3a} 3P ·{' '}
+                  {viewingGame.playerLine?.ftm}/{viewingGame.playerLine?.fta} FT
+                </div>
+              </div>
+
+              {/* Team box score */}
+              {viewingGame.teamNPCLines?.length > 0 && (
+                <div>
+                  <div className="font-mono text-xs text-gray-400 mb-1">TEAM BOX SCORE — {viewingGame.teamScore} PTS</div>
+                  <table className="stat-table text-xs">
+                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th></tr></thead>
+                    <tbody>
+                      <tr style={{background:'#000',color:'#fff'}}><td className="text-left">★ {player.name}</td>
+                        <td>{player.position}</td><td>{viewingGame.playerLine?.pts}</td>
+                        <td>{viewingGame.playerLine?.reb}</td><td>{viewingGame.playerLine?.ast}</td></tr>
+                      {viewingGame.teamNPCLines.map((p,i)=>(
+                        <tr key={i}><td className="text-left">{p.name}</td><td>{p.pos}</td>
+                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Opp box score */}
+              {viewingGame.oppLines?.length > 0 && (
+                <div>
+                  <div className="font-mono text-xs text-gray-400 mb-1">OPPONENT — {viewingGame.oppScore} PTS</div>
+                  <table className="stat-table text-xs">
+                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th></tr></thead>
+                    <tbody>
+                      {viewingGame.oppLines.map((p,i)=>(
+                        <tr key={i}><td className="text-left">{p.name}</td><td>{p.pos}</td>
+                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <button className="btn btn-primary w-full py-2" onClick={() => setViewingGame(null)}>CLOSE</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

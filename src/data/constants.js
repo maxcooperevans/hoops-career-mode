@@ -109,7 +109,7 @@ export const DECLINE_PRIORITY = {
 export const POSITION_WEIGHTS = {
   PG: {
     scoring: { inside: 0.20, mid: 0.34, three: 0.46 },
-    rebBonus: 0.50, astBonus: 1.65, blkBonus: 0.25,
+    rebBonus: 0.50, astBonus: 1.10, blkBonus: 0.25,  // was 1.65 — caused 18+ APG
     paceUsage: 1.05,
   },
   SG: {

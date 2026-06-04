@@ -124,9 +124,9 @@ export default function Playoffs() {
         // Auto-advance bracket
         advanceAfterSeriesWin(newBracket);
       } else {
-        setMessage(`Eliminated by ${oppTeam.city} ${oppTeam.name}. Season over.`);
+        setMessage(`Eliminated by ${oppTeam.city} ${oppTeam.name}. Press "Complete Playoffs" to see who wins the championship.`);
         addNews({ type: 'team', headline: `Eliminated in the ${roundLabel}`, date: `${2025 + player.nbaSeasonsPlayed} Playoffs` });
-        autoSimRemaining(newBracket);
+        updateBracket(newBracket); // don't auto-sim — let user press the button
       }
     } else {
       updateBracket(newBracket);
@@ -142,8 +142,8 @@ export default function Playoffs() {
       setMessage(`Series won ${updated.winsA}-${updated.winsB}! Advancing.`);
       advanceAfterSeriesWin(newBracket);
     } else {
-      setMessage(`Eliminated ${updated.winsA}-${updated.winsB}. Season is over.`);
-      autoSimRemaining(newBracket);
+      setMessage(`Eliminated ${updated.winsA}-${updated.winsB}. Press "Complete Playoffs" to see the champion.`);
+      updateBracket(newBracket); // don't auto-sim — show "Complete" button
     }
   }
 
@@ -321,7 +321,14 @@ export default function Playoffs() {
           </Panel>
         )}
 
-        {seriesComplete && (
+        {/* "Complete Playoffs" — shown when eliminated but bracket not fully sim'd */}
+        {eliminated && !champion && (
+          <button className="btn w-full py-3 tracking-widest" onClick={() => autoSimRemaining(bracket)}>
+            ⏩ COMPLETE PLAYOFFS
+          </button>
+        )}
+
+        {(seriesComplete || champion) && (
           <button className="btn btn-primary w-full py-3 tracking-widest" onClick={handleAdvanceToOffseason}>
             ADVANCE TO OFFSEASON →
           </button>
