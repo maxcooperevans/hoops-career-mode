@@ -223,7 +223,7 @@ export function simLeaguePlayerStats(teams, season, playerEntry) {
 
   teams.forEach(team => {
     const roster = generateRoster(team, season);
-    roster.forEach(npc => {
+    roster.forEach((npc, slotIdx) => {
       const posW = POS_SCORING_ROLE[npc.pos] ?? { rebMult: 1, astMult: 1 };
       const ovr  = npc.overall;
       // Estimate role from isStarter / isStar flags
@@ -231,13 +231,13 @@ export function simLeaguePlayerStats(teams, season, playerEntry) {
                  : npc.isStarter ? 'starter'
                  : 'rotation';
 
-      // Varied stats based on role, ovr, and position — large gaussian std for realism
-      const NPC_PPG_FLOOR = { franchise: 18, star: 14, starter: 9, rotation: 3 };
-      const NPC_PPG_CEIL  = { franchise: 30, star: 24, starter: 17, rotation: 9 };
+      // Stars must average 20+ PPG; franchise players 24+ at their floor
+      const NPC_PPG_FLOOR = { franchise: 24, star: 20, starter: 9, rotation: 3 };
+      const NPC_PPG_CEIL  = { franchise: 34, star: 28, starter: 18, rotation: 9 };
       const ppgT = clamp((ovr - 55) / (97 - 55), 0, 1);
       const ppgBase = NPC_PPG_FLOOR[role] + ppgT * (NPC_PPG_CEIL[role] - NPC_PPG_FLOOR[role]);
-      // High variance ensures starters range from 8–19 PPG, not all same
-      const ppg = Math.max(0, Math.round((ppgBase + gaussian(0, 3.5)) * 10) / 10);
+      // Moderate variance so stars can hit 26-32 PPG at peak
+      const ppg = Math.max(NPC_PPG_FLOOR[role], Math.round((ppgBase + gaussian(0, 2.5)) * 10) / 10);
 
       // REB varies heavily by position (bigs get 8-12, guards get 2-5)
       const posRebBase = { PG: 2.5, SG: 3.2, SF: 5.0, PF: 7.2, C: 9.5 };
@@ -256,7 +256,10 @@ export function simLeaguePlayerStats(teams, season, playerEntry) {
       const fgp = Math.round(clamp(42 + (ovr - 70) * 0.2 + gaussian(0, 2.5), 30, 64) * 10) / 10;
       const fg3p = Math.round(clamp(33 + (ovr - 60) * 0.12 + gaussian(0, 3.5), 22, 50) * 10) / 10;
 
-      leaguePlayers.push({ id: npc.id, name: npc.name, team: team.id, pos: npc.pos,
+      // slotId is season-independent (team + slot index) so the roster screen can
+      // always find the right stats regardless of which season the roster was generated for.
+      const slotId = `${team.id}_slot_${slotIdx}`;
+      leaguePlayers.push({ id: npc.id, slotId, name: npc.name, team: team.id, pos: npc.pos,
                            age: npc.age, ovr, ppg, rpg, apg, spg, bpg, gp, fgp, fg3p });
     });
   });

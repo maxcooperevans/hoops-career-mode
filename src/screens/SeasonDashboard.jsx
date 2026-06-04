@@ -170,7 +170,33 @@ export default function SeasonDashboard() {
   const team = player.team ? TEAM_MAP[player.team] : null;
   const overall = computeOverall(player.attributes, player.position);
 
-  const standings = league?.standings ?? null;
+  // Projected standings for this season (generated once at mount, used for partial-season display)
+  const [projectedStandings] = useState(() => simLeagueStandings(TEAMS, player.team, null));
+
+  // During a partial season, scale projected standings by games played.
+  // Player's team uses their actual W/L; other teams use proportional projections.
+  const standings = (() => {
+    const base = simmed
+      ? (simResult?.league?.standings ?? league?.standings)
+      : projectedStandings;
+    if (!base) return null;
+    if (simmed || gamesPlayed === 0) return base;
+
+    const scale = gamesPlayed / 82;
+    const partial = {};
+    Object.entries(base).forEach(([tid, rec]) => {
+      if (tid === player.team) {
+        const w = recentGameResults.filter(g => g.won).length;
+        const l = recentGameResults.length - w;
+        partial[tid] = { wins: w, losses: l, pct: recentGameResults.length > 0 ? Math.round(w / recentGameResults.length * 1000) / 1000 : 0 };
+      } else {
+        const w = Math.round(rec.wins * scale);
+        const l = Math.round((82 - rec.wins) * scale);
+        partial[tid] = { wins: w, losses: l, pct: (w + l) > 0 ? Math.round(w / (w + l) * 1000) / 1000 : 0 };
+      }
+    });
+    return partial;
+  })();
 
   function handleSimSeason() {
     if (!team) return;
@@ -275,7 +301,12 @@ export default function SeasonDashboard() {
 
     return (
       <div>
-        <div className="font-mono text-xs text-gray-400 uppercase tracking-wider mb-1">{conf}</div>
+        <div className="flex items-center justify-between mb-1">
+          <div className="font-mono text-xs text-gray-400 uppercase tracking-wider">{conf}</div>
+          {!simmed && gamesPlayed > 0 && (
+            <div className="font-mono text-xs text-gray-400">through {gamesPlayed}g (projected)</div>
+          )}
+        </div>
         <table className="stat-table">
           <thead>
             <tr><th className="text-left">Team</th><th>W</th><th>L</th><th>PCT</th></tr>

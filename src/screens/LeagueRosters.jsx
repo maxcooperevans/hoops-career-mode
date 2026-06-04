@@ -4,6 +4,13 @@ import { TEAMS, generateRoster } from '../data/teams.js';
 import TopNav from '../components/TopNav.jsx';
 import Panel from '../components/Panel.jsx';
 
+// ── Lookup stored stats by slotId (season-independent) or fall back ───────────
+// slotId = `${teamId}_slot_${slotIndex}` — set in simLeaguePlayerStats
+function getStoredStats(leaguePlayers, teamId, slotIdx) {
+  const slotId = `${teamId}_slot_${slotIdx}`;
+  return leaguePlayers.find(p => p.slotId === slotId || p.id?.startsWith(`${teamId}_${slotIdx}_`)) ?? null;
+}
+
 // ── Deterministic varied stats per NPC player ──────────────────────────────
 // Uses a stable hash of the player's seed-based ID so the same player always
 // shows the same stats (consistent across navigations) but different players
@@ -24,12 +31,14 @@ function computeNPCStats(p) {
   const pos      = p.pos ?? 'SF';
   const id       = p.id ?? p.name ?? 'x';
 
-  // PPG: star 14-28, starter 7-18, bench 2-8
-  const ppgBase  = isStar   ? 16 + (ovr - 75) * 0.45
-                 : isStart  ?  9 + (ovr - 65) * 0.28
-                 :              4 + (ovr - 55) * 0.12;
-  const ppgVar   = (stableRnd(id, 1) - 0.5) * 6;
-  const ppg      = Math.max(1.0, Math.round((ppgBase + ppgVar) * 10) / 10);
+  // PPG floors: franchise 24+, star 20+, starter 9+
+  const ppgBase  = isStar && ovr >= 85 ? 24 + (ovr - 85) * 0.40
+                 : isStar              ? 20 + (ovr - 75) * 0.35
+                 : isStart             ?  9 + (ovr - 65) * 0.28
+                 :                        4 + (ovr - 55) * 0.12;
+  const ppgFloor = isStar && ovr >= 85 ? 24 : isStar ? 20 : isStart ? 7 : 2;
+  const ppgVar   = (stableRnd(id, 1) - 0.5) * 4;
+  const ppg      = Math.max(ppgFloor, Math.round((ppgBase + ppgVar) * 10) / 10);
 
   // RPG: bigs rebound more
   const rebBase  = { PG: 2.5, SG: 3.4, SF: 5.2, PF: 7.4, C: 9.8 }[pos] ?? 4.5;
@@ -56,9 +65,21 @@ function computeNPCStats(p) {
 
 export default function LeagueRosters() {
   const player      = useGameStore(s => s.player);
+  const league      = useGameStore(s => s.league);
   const goTo        = useGameStore(s => s.goTo);
-  // Use the stored season from last completed season for roster seed consistency
-  const season      = 2025 + Math.max(0, player.nbaSeasonsPlayed - 1);
+
+  // Always use the most-recently stored season so IDs match stored stats
+  const latestStoredSeason = Math.max(
+    2025,
+    ...((league?.playerStats ?? []).map(e => e.season ?? 0))
+  );
+  const season = latestStoredSeason || (2025 + Math.max(0, player.nbaSeasonsPlayed - 1));
+
+  // Get players from the latest stored season for stat lookup
+  const leaguePlayers = useMemo(() => {
+    const sorted = [...(league?.playerStats ?? [])].sort((a, b) => (b.season ?? 0) - (a.season ?? 0));
+    return sorted[0]?.players ?? [];
+  }, [league?.playerStats]);
 
   const [selectedTeam, setSelectedTeam] = useState(player.team ?? TEAMS[0].id);
   const [view, setView]       = useState('game');  // 'game' | 'ability'
@@ -169,12 +190,15 @@ export default function LeagueRosters() {
                     <tbody>
                       {roster.map((p, i) => {
                         const isCP = p.isCareerPlayer;
-                        const gs   = isCP ? null : computeNPCStats(p);
+                        // Use stored stats (same data as leaderboards) if available;
+                        // only fall back to deterministic formula when no season data yet.
+                        const stored = isCP ? null : getStoredStats(leaguePlayers, selectedTeam, i);
+                        const gs = isCP ? null : (stored ?? computeNPCStats(p));
                         const style = isCP
                           ? { background: '#000', color: '#fff', fontWeight: 'bold' }
                           : p.isStar ? { fontWeight: 'bold' } : {};
 
-                        // Career player game stats from last season
+                        // Career player stats from last completed season
                         const cpLast = isCP
                           ? player.nbaSeasons[player.nbaSeasons.length - 1]?.averages
                           : null;
