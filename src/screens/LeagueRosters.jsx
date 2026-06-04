@@ -15,11 +15,41 @@ export default function LeagueRosters() {
   const [confFilter, setConfFilter] = useState('all'); // 'all'|'East'|'West'
 
   const team = TEAMS.find(t => t.id === selectedTeam);
-  const roster = useMemo(() => generateRoster(team, season), [selectedTeam, season]);
+  const isPlayerTeam = selectedTeam === player.team;
+  const baseRoster = useMemo(() => generateRoster(team, season), [selectedTeam, season]);
+
+  // Inject the career player into their own team's roster
+  const roster = useMemo(() => {
+    if (!isPlayerTeam) return baseRoster;
+    // Replace the first slot with the career player's stats
+    const playerEntry = {
+      id: 'career_player',
+      name: `★ ${player.name}`,
+      pos: player.position,
+      age: player.age,
+      overall: Math.round(
+        baseRoster[0]?.overall
+          ? (baseRoster[0].overall + 5)  // slightly better than the slot
+          : 70
+      ),
+      isStarter: true,
+      isStar: player.nbaSeasonsPlayed >= 3,
+      contract: {
+        salary: player.contractSalary,
+        years: player.contractYearsLeft,
+      },
+      isCareerPlayer: true,
+    };
+    return [playerEntry, ...baseRoster.slice(1)];
+  }, [isPlayerTeam, baseRoster, player]);
 
   // Get game stats for each NPC player from league leaders if available
   const leaguePlayers = (league?.playerStats ?? []).find(e => e.season)?.players ?? [];
   function getGameStats(npcId) {
+    if (npcId === 'career_player') {
+      const last = player.nbaSeasons[player.nbaSeasons.length - 1];
+      return last ? { ppg: last.averages?.pts, rpg: last.averages?.reb, apg: last.averages?.ast, spg: last.averages?.stl, bpg: last.averages?.blk } : null;
+    }
     return leaguePlayers.find(p => p.id === npcId) ?? null;
   }
 
@@ -113,12 +143,13 @@ export default function LeagueRosters() {
                     <tbody>
                       {roster.map((p, i) => {
                         const gs = getGameStats(p.id);
-                        const isMe = team.id === player.team && i === 0; // rough "is you" check
+                        const isCareerPlayer = p.isCareerPlayer;
                         return (
-                          <tr key={i} style={p.isStar ? { fontWeight: 'bold' } : {}}>
+                          <tr key={i}
+                            style={isCareerPlayer ? { background: '#000', color: '#fff', fontWeight: 'bold' } : p.isStar ? { fontWeight: 'bold' } : {}}>
                             <td className="text-left">
                               {p.name}
-                              {p.isStar && <span className="text-gray-400 ml-1 text-xs">(★)</span>}
+                              {p.isStar && !isCareerPlayer && <span className="text-gray-400 ml-1 text-xs">(★)</span>}
                             </td>
                             <td>{p.pos}</td>
                             <td>{p.age}</td>

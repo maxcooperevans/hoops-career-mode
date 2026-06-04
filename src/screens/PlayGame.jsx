@@ -3,14 +3,29 @@ import { useGameStore } from '../store/gameStore.js';
 import {
   simulateLiveGame, aggregateQuarters, applyDecisionToQuarters,
   pickHalftimeDecision, pickQ4Decision, generateDetailedPlayLog,
-  simOpponentQuarter,
+  simOpponentRoster, simOpponentQuarter,
 } from '../engine/gameEngine.js';
 import { determineRole } from '../engine/seasonEngine.js';
 import { computeOverall } from '../engine/playerEngine.js';
-import { TEAM_MAP } from '../data/teams.js';
+import { TEAM_MAP, generateRoster } from '../data/teams.js';
 import TopNav from '../components/TopNav.jsx';
 
-const Q_LABELS = ['Q1', 'Q2', 'Q3', 'Q4', 'OT'];
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+function zeroStats() {
+  return { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fgm: 0, fga: 0 };
+}
+
+function addQtoStats(acc, q) {
+  return {
+    pts: acc.pts + (q.pts ?? 0), reb: acc.reb + (q.reb ?? 0),
+    ast: acc.ast + (q.ast ?? 0), stl: acc.stl + (q.stl ?? 0),
+    blk: acc.blk + (q.blk ?? 0), fgm: acc.fgm + (q.fgm ?? 0),
+    fga: acc.fga + (q.fga ?? 0),
+  };
+}
+
+// ─── component ────────────────────────────────────────────────────────────────
 
 export default function PlayGame() {
   const player       = useGameStore(s => s.player);
@@ -19,197 +34,298 @@ export default function PlayGame() {
   const addNews      = useGameStore(s => s.addNews);
   const scheduleEntry= useGameStore(s => s.currentGameEntry);
 
-  const opponent  = scheduleEntry?.opponent ?? TEAM_MAP['WAS'];
+  const opponent  = scheduleEntry?.opponent ?? TEAM_MAP['WAS'] ?? Object.values(TEAM_MAP)[0];
   const isHome    = scheduleEntry?.isHome ?? true;
   const gameNumber= scheduleEntry?.gameNumber ?? 1;
-  const season    = 2025 + player.nbaSeasonsPlayed;
+  const season    = 2025 + (player.nbaSeasonsPlayed ?? 0);
 
-  const team = player.team ? TEAM_MAP[player.team] : null;
+  const team    = player.team ? TEAM_MAP[player.team] : null;
   const overall = computeOverall(player.attributes, player.position);
-  const role    = determineRole(overall, team?.strength ?? 70, player.nbaSeasonsPlayed, player.coachTrust);
+  const role    = determineRole(overall, team?.strength ?? 70, player.nbaSeasonsPlayed ?? 0, player.coachTrust ?? 50);
   const focus   = player.playerFocus ?? 'balanced';
 
-  // ── Game state ─────────────────────────────────────────────────────────────
-  const [phase, setPhase]         = useState('intro');
-  const [gameData, setGameData]   = useState(null);
-  const [quarters, setQuarters]   = useState([]);
-  const [shownQ, setShownQ]       = useState(0);
-  const [playLog, setPlayLog]     = useState([]);   // NBA-style play entries
-  const [decision, setDecision]   = useState(null);
-  const [result, setResult]       = useState(null);
-  const [boxTab, setBoxTab]       = useState('you'); // 'you'|'team'|'opp'
-  const [teamBoxScore, setTeamBoxScore]  = useState({}); // player_id → cumulative stats
-  const [oppBoxScore, setOppBoxScore]    = useState({});
+  // All mutable game data lives in a ref so animations always see the latest values
+  // without stale closure issues.
+  const gRef = useRef(null); // { quarters, plays, allPlays, teamFinalScore, oppFinalScore, oppRoster, teamNPCRoster, isOT }
 
-  const timerRef = useRef(null);
+  // ── display state ──────────────────────────────────────────────────────────
+  const [ready,      setReady]      = useState(false);
+  const [phase,      setPhase]      = useState('intro');  // intro|playing|decision|final
+  const [playLog,    setPlayLog]    = useState([]);
+  const [decision,   setDecision]   = useState(null);
+  const [boxTab,     setBoxTab]     = useState('you');    // you|team|opp
+  const [result,     setResult]     = useState(null);
 
+  // Running totals shown during play — updated per play, not per quarter
+  const [liveTeam, setLiveTeam]   = useState(0);
+  const [liveOpp,  setLiveOpp]    = useState(0);
+  const [curQ,     setCurQ]       = useState(0);
+  const [playerSt, setPlayerSt]   = useState(zeroStats());
+  const [oppBox,   setOppBox]     = useState({});   // id → cumulative stats
+  const [teamBox,  setTeamBox]    = useState({});   // id → cumulative stats
+
+  const ivRef  = useRef(null); // interval handle
+  const idxRef = useRef(0);    // play index within current quarter
+  const qIdxRef= useRef(0);    // current quarter index
+
+  // ── prepare game ──────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!team) return;
-    const data = simulateLiveGame(player, team, opponent, role, focus, season);
-    setGameData(data);
+    if (!team || !opponent) return;
+    try {
+      const data = simulateLiveGame(player, team, opponent, role, focus, season);
+
+      // Pre-generate all play logs per quarter (stored in ref so decisions can modify quarters later)
+      const perQPlays = data.quarters.map((q, qi) =>
+        generateDetailedPlayLog(player.name, team.id, data.oppRoster ?? [], q, qi + 1)
+      );
+
+      // Distribute team/opp score across plays in each quarter
+      // Each quarter contributes ~teamScore/numQs points; we spread them across the scoring plays
+      const numQs = data.quarters.length;
+      const qTeamTarget = (q) => Math.round(data.teamScore / numQs + (Math.random() - 0.5) * 8);
+      const qOppTarget  = (q) => Math.round(data.oppScore  / numQs + (Math.random() - 0.5) * 8);
+
+      const annotated = perQPlays.map((plays, qi) => {
+        const tgt = qTeamTarget(qi);
+        const otgt = qOppTarget(qi);
+        let tGiven = 0, oGiven = 0;
+        return plays.map((p, pi) => {
+          let td = 0, od = 0;
+          if (p.pts > 0 && tGiven < tgt) {
+            td = Math.min(p.pts, tgt - tGiven);
+            tGiven += td;
+          } else if (p.pts < 0 && oGiven < otgt) {
+            od = Math.min(Math.abs(p.pts), otgt - oGiven);
+            oGiven += od;
+          }
+          // On the last play, dump any remainder
+          if (pi === plays.length - 1) { td += tgt - tGiven; od += otgt - oGiven; tGiven = tgt; oGiven = otgt; }
+          return { ...p, td, od };
+        });
+      });
+
+      // Generate team NPC roster for "Team" box score tab
+      const teamNPCRoster = simOpponentRoster(team, season);
+
+      gRef.current = {
+        quarters:     data.quarters,
+        annotated,
+        teamFinalScore: data.teamScore,
+        oppFinalScore:  data.oppScore,
+        isOT:           data.isOT,
+        oppRoster:      data.oppRoster ?? [],
+        teamNPCRoster,
+      };
+      setReady(true);
+    } catch (e) {
+      console.error('Game init error:', e);
+    }
+    return () => clearInterval(ivRef.current);
   }, []);
 
-  // Running totals from revealed quarters
-  const playerTotals = quarters.slice(0, shownQ).reduce(
-    (acc, q) => ({
-      pts: acc.pts + q.pts, reb: acc.reb + q.reb, ast: acc.ast + q.ast,
-      stl: acc.stl + (q.stl ?? 0), blk: acc.blk + (q.blk ?? 0),
-      fgm: acc.fgm + q.fgm, fga: acc.fga + q.fga,
-    }),
-    { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, fgm: 0, fga: 0 }
-  );
+  // ── quarter animation ──────────────────────────────────────────────────────
+  function runQuarter(qi) {
+    clearInterval(ivRef.current);
+    qIdxRef.current = qi;
+    idxRef.current = 0;
+    setCurQ(qi);
 
-  // Approximate running score by quarter fraction
-  const runningScore = (() => {
-    if (!gameData) return { team: 0, opp: 0 };
-    const frac = shownQ / Math.max(4, gameData.quarters.length);
-    return {
-      team: Math.round(gameData.teamScore * frac),
-      opp:  Math.round(gameData.oppScore  * frac),
-    };
-  })();
+    const plays  = gRef.current.annotated[qi];
+    const oppQs  = simOpponentQuarter(gRef.current.oppRoster);
+    const teamQs = simOpponentQuarter(gRef.current.teamNPCRoster);
 
-  function startAnimation(qIdx) {
-    if (!gameData) return;
-    const qStats  = quarters[qIdx] ?? gameData.quarters[qIdx];
-    const logs    = generateDetailedPlayLog(player.name, team?.id ?? 'TM',
-                      gameData.oppRoster, qStats, qIdx + 1);
+    if (!plays || plays.length === 0) {
+      onQuarterEnd(qi);
+      return;
+    }
 
-    // Update opponent box score for this quarter
-    const oppQLines = simOpponentQuarter(gameData.oppRoster);
-    setOppBoxScore(prev => {
-      const next = { ...prev };
-      oppQLines.forEach(p => {
-        if (!next[p.id]) next[p.id] = { name: p.name, pos: p.pos, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 };
-        next[p.id].pts += p.qPts ?? 0;
-        next[p.id].reb += p.qReb ?? 0;
-        next[p.id].ast += p.qAst ?? 0;
-        next[p.id].stl += p.qStl ?? 0;
-        next[p.id].blk += p.qBlk ?? 0;
-      });
-      return next;
-    });
-
-    let logIdx = 0;
-    timerRef.current = setInterval(() => {
-      if (logIdx < logs.length) {
-        setPlayLog(prev => [logs[logIdx], ...prev.slice(0, 11)]);
-        logIdx++;
-      } else {
-        clearInterval(timerRef.current);
-        setShownQ(qIdx + 1);
-
-        if (qIdx === 0) {
-          // Q1 done → Q2
-          setTimeout(() => startAnimation(1), 500);
-        } else if (qIdx === 1) {
-          // Q2 done → halftime decision
-          const h1pts = (quarters[0]?.pts ?? 0) + (quarters[1]?.pts ?? 0);
-          const runScore = { team: gameData.teamScore * 0.5, opp: gameData.oppScore * 0.5 };
-          const diff = Math.round(runScore.team - runScore.opp);
-          const dec = pickHalftimeDecision(h1pts, diff);
-          setTimeout(() => { setDecision({ ...dec, body: dec.body() }); setPhase('half_decision'); }, 700);
-        } else if (qIdx === 2) {
-          // Q3 done → possible Q4 decision
-          const total3 = quarters.slice(0, 3).reduce((s, q) => s + q.pts, 0);
-          const diff = Math.round((gameData.teamScore * 0.75) - (gameData.oppScore * 0.75));
-          const dec = pickQ4Decision(diff, total3);
-          if (dec) {
-            setTimeout(() => { setDecision({ ...dec, body: dec.body() }); setPhase('q4_decision'); }, 500);
-          } else {
-            setTimeout(() => startQ4(), 500);
-          }
-        } else {
-          // Final quarter done → finish
-          setTimeout(() => finishGame(), 700);
-        }
+    ivRef.current = setInterval(() => {
+      const idx = idxRef.current;
+      if (idx >= plays.length) {
+        clearInterval(ivRef.current);
+        onQuarterEnd(qi);
+        return;
       }
-    }, 480);
+      const play = plays[idx];
+      idxRef.current++;
+
+      // Update running score
+      if (play.td > 0) setLiveTeam(prev => prev + play.td);
+      if (play.od > 0) setLiveOpp (prev => prev + play.od);
+
+      // Update play log
+      setPlayLog(prev => [play, ...prev.slice(0, 13)]);
+
+      // Update player stats (player plays are those where team === team.id, not OPP)
+      if (play.team !== 'OPP') {
+        if (play.pts > 0) setPlayerSt(prev => ({ ...prev, pts: prev.pts + play.pts }));
+        if (play.text?.toLowerCase().includes('rebound')) setPlayerSt(prev => ({ ...prev, reb: prev.reb + 1 }));
+        if (play.text?.toLowerCase().includes('ast')) setPlayerSt(prev => ({ ...prev, ast: prev.ast + 1 }));
+        if (play.text?.toLowerCase().includes('steal')) setPlayerSt(prev => ({ ...prev, stl: prev.stl + 1 }));
+        if (play.text?.toLowerCase().includes('block') || play.text?.toLowerCase().includes('swat')) setPlayerSt(prev => ({ ...prev, blk: prev.blk + 1 }));
+      }
+
+      // Update opponent box score
+      setOppBox(prev => {
+        const next = { ...prev };
+        oppQs.forEach(p => {
+          if (!next[p.id]) next[p.id] = { name: p.name, pos: p.pos, pts: 0, reb: 0, ast: 0 };
+          next[p.id].pts += p.qPts ?? 0;
+          next[p.id].reb += p.qReb ?? 0;
+          next[p.id].ast += p.qAst ?? 0;
+        });
+        return next;
+      });
+
+      // Update team NPC box score (once per quarter, first play)
+      if (idx === 0) {
+        setTeamBox(prev => {
+          const next = { ...prev };
+          teamQs.forEach(p => {
+            if (!next[p.id]) next[p.id] = { name: p.name, pos: p.pos, pts: 0, reb: 0, ast: 0 };
+            next[p.id].pts += p.qPts ?? 0;
+            next[p.id].reb += p.qReb ?? 0;
+            next[p.id].ast += p.qAst ?? 0;
+          });
+          return next;
+        });
+      }
+    }, 450);
   }
 
-  function startQ4() {
-    setPhase('q4');
-    startAnimation(gameData.isOT ? 4 : 3);
+  function onQuarterEnd(qi) {
+    const g = gRef.current;
+    if (qi === 1) {
+      // Halftime
+      const halfPts = g.quarters.slice(0, 2).reduce((s, q) => s + q.pts, 0);
+      const approxDiff = Math.round((g.teamFinalScore - g.oppFinalScore) * 0.5);
+      const dec = pickHalftimeDecision(halfPts, approxDiff);
+      setTimeout(() => { setDecision({ ...dec, body: dec.body?.() ?? dec.body }); setPhase('decision'); }, 700);
+    } else if (qi === 2) {
+      const pts3q = g.quarters.slice(0, 3).reduce((s, q) => s + q.pts, 0);
+      const approxDiff = Math.round((g.teamFinalScore - g.oppFinalScore) * 0.75);
+      const dec = pickQ4Decision(approxDiff, pts3q);
+      if (dec) {
+        setTimeout(() => { setDecision({ ...dec, body: dec.body?.() ?? dec.body }); setPhase('decision'); }, 500);
+      } else {
+        setTimeout(() => runQuarter(3), 500);
+      }
+    } else if (qi >= 3) {
+      // Final
+      setTimeout(() => finishGame(), 800);
+    } else {
+      setTimeout(() => runQuarter(qi + 1), 400);
+    }
   }
 
   function handleStart() {
-    setQuarters([...gameData.quarters]);
-    setPhase('q1');
+    if (!gRef.current) return;
+    setPhase('playing');
+    setLiveTeam(0); setLiveOpp(0);
+    setPlayerSt(zeroStats());
     setPlayLog([]);
-    setShownQ(0);
-    startAnimation(0);
+    setOppBox({}); setTeamBox({});
+    setTimeout(() => runQuarter(0), 300);
   }
 
   function handleDecision(choice) {
-    const updated = applyDecisionToQuarters(quarters, choice, 0);
-    setQuarters(updated);
+    // Apply decision modifiers to the quarters stored in ref so next quarter animation uses updated stats
+    const updated = applyDecisionToQuarters(gRef.current.quarters, choice, 0);
+    gRef.current.quarters = updated;
+
+    // Regenerate annotated plays for Q3/Q4 with the updated quarter stats
+    const prevAnnotated = gRef.current.annotated;
+    const numQs = updated.length;
+    const reAnnotate = (qi) => {
+      const q = updated[qi];
+      const tgt = Math.round(gRef.current.teamFinalScore / numQs);
+      const otgt = Math.round(gRef.current.oppFinalScore  / numQs);
+      const plays = generateDetailedPlayLog(player.name, team?.id ?? 'TM',
+        gRef.current.oppRoster, q, qi + 1);
+      let tg = 0, og = 0;
+      return plays.map((p, pi) => {
+        let td = 0, od = 0;
+        if (p.pts > 0 && tg < tgt) { td = Math.min(p.pts, tgt - tg); tg += td; }
+        else if (p.pts < 0 && og < otgt) { od = Math.min(Math.abs(p.pts), otgt - og); og += od; }
+        if (pi === plays.length - 1) { td += tgt - tg; od += otgt - og; }
+        return { ...p, td, od };
+      });
+    };
+    gRef.current.annotated[2] = reAnnotate(2);
+    gRef.current.annotated[3] = reAnnotate(3);
+
     setDecision(null);
-    if (phase === 'half_decision') { setPhase('q3'); startAnimation(2); }
-    if (phase === 'q4_decision')   startQ4();
+    setPhase('playing');
+
+    const isHalf = qIdxRef.current <= 1;
+    setTimeout(() => runQuarter(isHalf ? 2 : 3), 300);
   }
 
   function finishGame() {
-    const total = aggregateQuarters(quarters);
-    const won   = gameData.teamScore > gameData.oppScore;
-    const line  = {
+    clearInterval(ivRef.current);
+    const g = gRef.current;
+    const total = aggregateQuarters(g.quarters);
+    const won = g.teamFinalScore > g.oppFinalScore;
+    const line = {
       pts: total.pts, reb: total.reb, ast: total.ast,
       stl: total.stl, blk: total.blk, tov: total.tov ?? 0,
       fgm: total.fgm, fga: total.fga,
       fg3m: total.fg3m, fg3a: total.fg3a,
       ftm: total.ftm, fta: total.fta,
-      teamScore: gameData.teamScore, oppScore: gameData.oppScore,
-      opponentId: opponent.id, won, isOT: gameData.isOT,
+      teamScore: g.teamFinalScore, oppScore: g.oppFinalScore,
+      opponentId: opponent.id, won, isOT: g.isOT,
     };
     addGameToLog(line);
     addNews({
       type: 'game',
-      headline: `${won ? '✓ W' : '✗ L'} ${gameData.teamScore}–${gameData.oppScore}${gameData.isOT ? ' OT' : ''} vs ${opponent.city} ${opponent.name} — ${total.pts} PTS · ${total.reb} REB · ${total.ast} AST`,
+      headline: `${won ? '✓ W' : '✗ L'} ${g.teamFinalScore}–${g.oppFinalScore}${g.isOT ? ' OT' : ''} vs ${opponent.city} ${opponent.name} — ${total.pts} PTS · ${total.reb} REB · ${total.ast} AST`,
       date: `Game ${gameNumber}`,
     });
-    setResult({ ...line, won });
+    setResult({ ...line, won, quarters: g.quarters });
     setPhase('final');
   }
 
-  if (!gameData) return (
+  // ── helpers ────────────────────────────────────────────────────────────────
+  const oppName  = `${opponent.city} ${opponent.name}`;
+  const teamName = team ? `${team.city} ${team.name}` : 'Your Team';
+  const numQs    = gRef.current?.quarters?.length ?? 4;
+  const Q_LABELS = ['Q1', 'Q2', 'Q3', 'Q4', 'OT'];
+
+  const scoreDisplay = phase === 'final'
+    ? { team: result?.teamScore ?? 0, opp: result?.oppScore ?? 0 }
+    : { team: liveTeam, opp: liveOpp };
+
+  const phaseLabel = phase === 'intro' ? 'PRE-GAME'
+    : phase === 'final' ? `FINAL${result?.isOT ? ' (OT)' : ''}`
+    : phase === 'decision' ? 'BREAK'
+    : `Q${curQ + 1}`;
+
+  // ── render ─────────────────────────────────────────────────────────────────
+  if (!ready) return (
     <div className="min-h-screen flex items-center justify-center">
       <div className="font-mono text-sm animate-pulse">Generating game...</div>
     </div>
   );
-
-  const oppName  = `${opponent.city} ${opponent.name}`;
-  const teamName = team ? `${team.city} ${team.name}` : 'Your Team';
-  const totalQs  = gameData.isOT ? 5 : 4;
-
-  // Scoreboard
-  const scoreDisplay = phase === 'final'
-    ? { team: result.teamScore, opp: result.oppScore }
-    : runningScore;
 
   return (
     <div className="min-h-screen">
       <TopNav />
       <div className="max-w-2xl mx-auto p-4 space-y-3">
 
-        {/* Scoreboard */}
+        {/* ── Scoreboard ── */}
         <div className="border-2 border-black p-3 mt-4">
           <div className="flex justify-between items-center font-mono">
             <div className="text-center flex-1">
               <div className="text-xs text-gray-500 uppercase">{isHome ? 'Home' : 'Away'}</div>
               <div className="font-bold text-sm truncate">{teamName}</div>
-              <div className={`text-4xl font-bold ${phase === 'final' && result?.won ? '' : ''}`}>
-                {scoreDisplay.team}
-              </div>
+              <div className="text-4xl font-bold tabular-nums">{scoreDisplay.team}</div>
             </div>
             <div className="text-center px-3">
-              <div className="font-mono text-xs text-gray-400">
-                {phase === 'intro' ? 'PRE-GAME' : phase === 'final' ? `FINAL${result?.isOT ? ' (OT)' : ''}` : `Q${Math.min(shownQ + 1, totalQs)}`}
-              </div>
-              <div className="flex gap-0.5 mt-1 justify-center">
-                {Q_LABELS.slice(0, totalQs).map((q, i) => (
+              <div className="font-mono text-xs text-gray-500 mb-1">{phaseLabel}</div>
+              <div className="flex gap-0.5 justify-center">
+                {Q_LABELS.slice(0, numQs).map((q, i) => (
                   <div key={q} className={`w-6 h-5 border border-black flex items-center justify-center text-xs font-mono
-                    ${i < shownQ ? 'bg-black text-white' : 'text-gray-300'}`}>
-                    {q}
-                  </div>
+                    ${i < curQ + (phase === 'final' ? 1 : 0) ? 'bg-black text-white' : 'text-gray-300'}`}>{q}</div>
                 ))}
               </div>
               <div className="font-mono text-xs text-gray-400 mt-1">Game {gameNumber}</div>
@@ -217,12 +333,12 @@ export default function PlayGame() {
             <div className="text-center flex-1">
               <div className="text-xs text-gray-500 uppercase">{isHome ? 'Away' : 'Home'}</div>
               <div className="font-bold text-sm truncate">{oppName}</div>
-              <div className="text-4xl font-bold">{scoreDisplay.opp}</div>
+              <div className="text-4xl font-bold tabular-nums">{scoreDisplay.opp}</div>
             </div>
           </div>
         </div>
 
-        {/* INTRO */}
+        {/* ── INTRO ── */}
         {phase === 'intro' && (
           <div className="space-y-3">
             <div className="panel">
@@ -232,8 +348,7 @@ export default function PlayGame() {
                   ['Your Role', role], ['Focus', focus],
                   ['Location', isHome ? 'Home' : 'Away']].map(([l, v]) => (
                   <div key={l} className="flex justify-between">
-                    <span className="text-gray-500">{l}</span>
-                    <span className="capitalize">{v}</span>
+                    <span className="text-gray-500">{l}</span><span className="capitalize">{v}</span>
                   </div>
                 ))}
               </div>
@@ -244,61 +359,76 @@ export default function PlayGame() {
           </div>
         )}
 
-        {/* LIVE GAME */}
-        {phase !== 'intro' && phase !== 'final' && !decision && (
+        {/* ── LIVE GAME ── */}
+        {(phase === 'playing' || phase === 'decision') && !decision && (
           <div className="space-y-3">
             {/* Box score tabs */}
             <div className="flex border border-black">
-              {[['you', player.name], ['opp', oppName]].map(([t, label]) => (
+              {[['you', player.name.split(' ').slice(-1)[0]], ['team', teamName.split(' ').slice(-1)[0]], ['opp', oppName.split(' ').slice(-1)[0]]].map(([t, label]) => (
                 <button key={t} onClick={() => setBoxTab(t)}
-                  className={`flex-1 py-1.5 text-xs font-bold border-r last:border-r-0 border-black
+                  className={`flex-1 py-1.5 text-xs font-bold border-r last:border-r-0 border-black truncate px-1
                     ${boxTab === t ? 'bg-black text-white' : 'hover:bg-gray-100'}`}>
-                  {label.split(' ').slice(-1)[0].toUpperCase()}
+                  {label.toUpperCase()}
                 </button>
               ))}
             </div>
 
-            {/* Player stats */}
             {boxTab === 'you' && (
               <div className="panel">
                 <div className="panel-header flex items-center gap-2">
                   {player.name}
-                  <span className="w-2 h-2 rounded-full bg-white animate-pulse inline-block" />
+                  {phase === 'playing' && <span className="w-2 h-2 rounded-full bg-white animate-pulse inline-block" />}
                 </div>
                 <div className="panel-body">
                   <div className="grid grid-cols-5 gap-2 font-mono text-center">
-                    {[['PTS', playerTotals.pts], ['REB', playerTotals.reb], ['AST', playerTotals.ast],
-                      ['STL', playerTotals.stl], ['BLK', playerTotals.blk]].map(([l, v]) => (
-                      <div key={l}><div className="text-2xl font-bold">{v}</div>
-                        <div className="text-xs text-gray-500">{l}</div></div>
+                    {[['PTS', playerSt.pts],['REB', playerSt.reb],['AST', playerSt.ast],['STL', playerSt.stl],['BLK', playerSt.blk]].map(([l,v]) => (
+                      <div key={l}><div className="text-2xl font-bold">{v}</div><div className="text-xs text-gray-500">{l}</div></div>
                     ))}
                   </div>
-                  {playerTotals.fga > 0 && (
-                    <div className="font-mono text-xs text-gray-400 text-center mt-2">
-                      {playerTotals.fgm}/{playerTotals.fga} FG
-                    </div>
-                  )}
                 </div>
               </div>
             )}
 
-            {/* Opponent box score */}
-            {boxTab === 'opp' && (
+            {boxTab === 'team' && (
               <div className="panel">
-                <div className="panel-header">{oppName} — LIVE BOX SCORE</div>
+                <div className="panel-header">{teamName} — LIVE</div>
                 <div className="overflow-x-auto panel-body p-0">
                   <table className="stat-table text-xs">
-                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th></tr></thead>
+                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th></tr></thead>
                     <tbody>
-                      {Object.values(oppBoxScore).sort((a, b) => b.pts - a.pts).map((p, i) => (
+                      {/* Player themselves first */}
+                      <tr style={{ background: '#000', color: '#fff' }}>
+                        <td className="text-left">★ {player.name}</td>
+                        <td>{player.position}</td>
+                        <td>{playerSt.pts}</td><td>{playerSt.reb}</td><td>{playerSt.ast}</td>
+                      </tr>
+                      {Object.values(teamBox).sort((a, b) => b.pts - a.pts).map((p, i) => (
                         <tr key={i}>
-                          <td className="text-left">{p.name}</td>
-                          <td>{p.pos}</td>
-                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td><td>{p.stl}</td>
+                          <td className="text-left">{p.name}</td><td>{p.pos}</td>
+                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td>
                         </tr>
                       ))}
-                      {Object.keys(oppBoxScore).length === 0 && (
-                        <tr><td colSpan={6} className="text-center text-gray-400">Game in progress...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {boxTab === 'opp' && (
+              <div className="panel">
+                <div className="panel-header">{oppName} — LIVE</div>
+                <div className="overflow-x-auto panel-body p-0">
+                  <table className="stat-table text-xs">
+                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th></tr></thead>
+                    <tbody>
+                      {Object.values(oppBox).sort((a, b) => b.pts - a.pts).map((p, i) => (
+                        <tr key={i}>
+                          <td className="text-left">{p.name}</td><td>{p.pos}</td>
+                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td>
+                        </tr>
+                      ))}
+                      {Object.keys(oppBox).length === 0 && (
+                        <tr><td colSpan={5} className="text-center text-gray-400">Q1 in progress...</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -308,32 +438,35 @@ export default function PlayGame() {
 
             {/* Play-by-play */}
             <div className="panel">
-              <div className="panel-header">PLAY BY PLAY</div>
-              <div className="panel-body space-y-0.5 max-h-52 overflow-y-auto font-mono text-xs">
-                {playLog.map((play, i) => (
+              <div className="panel-header flex items-center gap-2">
+                PLAY BY PLAY
+                {phase === 'playing' && <span className="w-2 h-2 rounded-full bg-white animate-pulse inline-block" />}
+              </div>
+              <div className="panel-body space-y-0.5 max-h-52 overflow-y-auto">
+                {playLog.map((p, i) => (
                   <div key={i}
-                    className={`py-0.5 border-b border-gray-100 last:border-0 flex gap-2
-                      ${play.team !== 'OPP' ? 'font-medium' : 'text-gray-500'}`}>
-                    <span className="shrink-0 text-gray-400 w-16">{play.time}</span>
-                    <span className="flex-1">{play.text}</span>
+                    className={`font-mono text-xs py-0.5 border-b border-gray-100 last:border-0 flex gap-2
+                      ${p.team !== 'OPP' ? 'font-medium' : 'text-gray-500'}`}>
+                    <span className="text-gray-400 shrink-0 w-14">{p.time}</span>
+                    <span className="flex-1">{p.text}</span>
+                    {(p.td > 0) && <span className="shrink-0 font-bold">+{p.td}</span>}
+                    {(p.od > 0) && <span className="shrink-0 text-gray-400">+{p.od}</span>}
                   </div>
                 ))}
-                {playLog.length === 0 && (
-                  <div className="text-gray-400 animate-pulse">Tip-off...</div>
-                )}
+                {playLog.length === 0 && <div className="font-mono text-xs text-gray-400 animate-pulse">Tip-off...</div>}
               </div>
             </div>
           </div>
         )}
 
-        {/* DECISION */}
+        {/* ── DECISION ── */}
         {decision && (
           <div className="border-2 border-black p-5 bg-white">
             <div className="font-mono text-xs text-gray-400 uppercase tracking-widest mb-1">
-              {phase === 'half_decision' ? 'HALF-TIME' : 'Q4 DECISION'}
+              {qIdxRef.current <= 1 ? 'HALF-TIME' : 'Q4 DECISION'}
             </div>
-            <div className="font-bold text-lg mb-2">{decision.title}</div>
-            <p className="text-sm text-gray-600 mb-4">{decision.body}</p>
+            <div className="font-bold text-xl mb-2">{decision.title}</div>
+            <p className="text-sm text-gray-600 mb-4">{typeof decision.body === 'function' ? decision.body() : decision.body}</p>
             <div className="space-y-2">
               {decision.choices.map((c, i) => (
                 <button key={i} className="btn w-full text-left py-3 px-4 flex gap-3"
@@ -346,10 +479,10 @@ export default function PlayGame() {
           </div>
         )}
 
-        {/* FINAL BOX SCORE */}
+        {/* ── FINAL ── */}
         {phase === 'final' && result && (
           <div className="space-y-3">
-            <div className={`border-2 border-black p-4 text-center`}>
+            <div className="border-2 border-black p-4 text-center">
               <div className="font-mono text-2xl font-bold">
                 {result.won ? '✓ WIN' : '✗ LOSS'}{result.isOT ? ' (OT)' : ''}
               </div>
@@ -358,13 +491,12 @@ export default function PlayGame() {
               </div>
             </div>
 
-            {/* Tab switcher for final box score */}
             <div className="flex border border-black">
-              {[['you', player.name], ['opp', oppName]].map(([t, label]) => (
+              {[['you', player.name.split(' ').slice(-1)[0]], ['team', teamName.split(' ').slice(-1)[0]], ['opp', oppName.split(' ').slice(-1)[0]]].map(([t, label]) => (
                 <button key={t} onClick={() => setBoxTab(t)}
-                  className={`flex-1 py-1.5 text-xs font-bold border-r last:border-r-0 border-black
+                  className={`flex-1 py-1.5 text-xs font-bold border-r last:border-r-0 border-black truncate px-1
                     ${boxTab === t ? 'bg-black text-white' : 'hover:bg-gray-100'}`}>
-                  {label.split(' ').slice(-1)[0].toUpperCase()}
+                  {label.toUpperCase()}
                 </button>
               ))}
             </div>
@@ -375,45 +507,61 @@ export default function PlayGame() {
                 <div className="panel-body">
                   <div className="grid grid-cols-5 gap-2 font-mono text-center mb-3">
                     {[['PTS',result.pts],['REB',result.reb],['AST',result.ast],['STL',result.stl],['BLK',result.blk]].map(([l,v]) => (
-                      <div key={l}><div className="text-3xl font-bold">{v}</div>
-                        <div className="text-xs text-gray-500">{l}</div></div>
+                      <div key={l}><div className="text-3xl font-bold">{v}</div><div className="text-xs text-gray-500">{l}</div></div>
                     ))}
                   </div>
                   <div className="font-mono text-xs text-gray-500 text-center">
                     {result.fgm}/{result.fga} FG · {result.fg3m}/{result.fg3a} 3P · {result.ftm}/{result.fta} FT
                   </div>
-                  <div className="mt-3 border-t border-gray-100 pt-2">
-                    <div className="font-mono text-xs text-gray-400 mb-1">By quarter</div>
-                    <table className="stat-table text-xs">
-                      <thead><tr><th className="text-left">Qtr</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th></tr></thead>
-                      <tbody>
-                        {quarters.map((q, i) => (
-                          <tr key={i}>
-                            <td className="text-left">{Q_LABELS[i]}</td>
-                            <td>{q.pts}</td><td>{q.reb}</td><td>{q.ast}</td><td>{q.stl}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  {result.quarters?.length > 0 && (
+                    <div className="mt-3 border-t border-gray-100 pt-2">
+                      <div className="font-mono text-xs text-gray-400 mb-1">By quarter</div>
+                      <table className="stat-table text-xs">
+                        <thead><tr><th className="text-left">Qtr</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th></tr></thead>
+                        <tbody>
+                          {result.quarters.map((q, i) => (
+                            <tr key={i}><td className="text-left">{Q_LABELS[i]}</td>
+                              <td>{q.pts}</td><td>{q.reb}</td><td>{q.ast}</td><td>{q.stl}</td></tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {boxTab === 'team' && (
+              <div className="panel">
+                <div className="panel-header">{teamName} — FINAL</div>
+                <div className="overflow-x-auto panel-body p-0">
+                  <table className="stat-table text-xs">
+                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th></tr></thead>
+                    <tbody>
+                      <tr style={{ background: '#000', color: '#fff' }}>
+                        <td className="text-left">★ {player.name}</td><td>{player.position}</td>
+                        <td>{result.pts}</td><td>{result.reb}</td><td>{result.ast}</td>
+                      </tr>
+                      {Object.values(teamBox).sort((a, b) => b.pts - a.pts).map((p, i) => (
+                        <tr key={i}><td className="text-left">{p.name}</td><td>{p.pos}</td>
+                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
 
             {boxTab === 'opp' && (
               <div className="panel">
-                <div className="panel-header">{oppName} — FINAL BOX SCORE</div>
+                <div className="panel-header">{oppName} — FINAL</div>
                 <div className="overflow-x-auto panel-body p-0">
                   <table className="stat-table text-xs">
-                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th></tr></thead>
+                    <thead><tr><th className="text-left">Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th></tr></thead>
                     <tbody>
-                      {Object.values(oppBoxScore).sort((a, b) => b.pts - a.pts).map((p, i) => (
-                        <tr key={i}>
-                          <td className="text-left">{p.name}</td>
-                          <td>{p.pos}</td>
-                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td>
-                          <td>{p.stl}</td><td>{p.blk}</td>
-                        </tr>
+                      {Object.values(oppBox).sort((a, b) => b.pts - a.pts).map((p, i) => (
+                        <tr key={i}><td className="text-left">{p.name}</td><td>{p.pos}</td>
+                          <td>{p.pts}</td><td>{p.reb}</td><td>{p.ast}</td></tr>
                       ))}
                     </tbody>
                   </table>
@@ -422,9 +570,7 @@ export default function PlayGame() {
             )}
 
             <button className="btn btn-primary w-full py-3 tracking-widest"
-              onClick={() => goTo('SEASON_DASHBOARD')}>
-              ← BACK TO SEASON
-            </button>
+              onClick={() => goTo('SEASON_DASHBOARD')}>← BACK TO SEASON</button>
           </div>
         )}
       </div>
