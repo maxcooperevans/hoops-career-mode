@@ -150,6 +150,14 @@ export default function SeasonDashboard() {
   const addRecentGameResult = useGameStore(s => s.addRecentGameResult);
   const recentGameResults = useGameStore(s => s.recentGameResults) ?? [];
   const tradeLog = useGameStore(s => s.tradeLog) ?? [];
+  const teamStrengths = useGameStore(s => s.teamStrengths);
+
+  // Build runtime team list: overlay persisted strengths onto the static TEAMS constant.
+  // Falls back to original strength when teamStrengths is null (older saves).
+  const runtimeTeams = React.useMemo(
+    () => TEAMS.map(t => ({ ...t, strength: teamStrengths?.[t.id] ?? t.strength })),
+    [teamStrengths]
+  );
 
   const [seasonYear] = useState(() => 2025 + player.nbaSeasonsPlayed);
   const [simmed, setSimmed] = useState(player.currentSeasonSimmed ?? false);
@@ -171,7 +179,7 @@ export default function SeasonDashboard() {
   const overall = computeOverall(player.attributes, player.position);
 
   // Projected standings for this season (generated once at mount, used for partial-season display)
-  const [projectedStandings] = useState(() => simLeagueStandings(TEAMS, player.team, null));
+  const [projectedStandings] = useState(() => simLeagueStandings(runtimeTeams, player.team, null));
 
   // During a partial season, scale projected standings by games played.
   // Player's team uses their actual W/L; other teams use proportional projections.
@@ -201,18 +209,28 @@ export default function SeasonDashboard() {
   function handleSimSeason() {
     if (!team) return;
 
-    const playerSeason = simPlayerSeason(player, team, seasonYear);
-    const newStandings = simLeagueStandings(TEAMS, player.team, playerSeason);
-    const awards = determineAwards(playerSeason, newStandings, player.team, player.nbaSeasonsPlayed);
-    playerSeason.awards = awards;
+    // Use runtimeTeam (with drifted strength) so role/production reflect the live league state
+    const runtimeTeam = runtimeTeams.find(t => t.id === player.team) ?? team;
 
-    // Sim league-wide player stats for leaderboards
-    const leaguePlayerStats = simLeaguePlayerStats(TEAMS, seasonYear, {
+    const playerSeason = simPlayerSeason(player, runtimeTeam, seasonYear);
+    const newStandings = simLeagueStandings(runtimeTeams, player.team, playerSeason);
+
+    // Sim league-wide player stats FIRST — awards are derived from the same pool
+    // so leaderboards and award winners always agree (Fix 1).
+    const leaguePlayerStats = simLeaguePlayerStats(runtimeTeams, seasonYear, {
       name: player.name, team: player.team, pos: player.position,
       age: player.age, overall: playerSeason.overall,
       averages: playerSeason.averages, gamesPlayed: playerSeason.gamesPlayed,
       fgPct: playerSeason.fgPct, fg3Pct: playerSeason.fg3Pct,
+      nbaSeasonsPlayed: player.nbaSeasonsPlayed,
     });
+
+    // Awards are now rank-based across the full league pool (Fix 1)
+    const awards = determineAwards(
+      leaguePlayerStats, newStandings,
+      player.team, player.nbaSeasonsPlayed, player.nbaSeasons,
+    );
+    playerSeason.awards = awards;
 
     const results = {
       season: seasonYear,
@@ -245,12 +263,14 @@ export default function SeasonDashboard() {
     const count = Math.min(n, remaining);
     if (count <= 0) return;
 
+    const runtimeTeam = runtimeTeams.find(t => t.id === player.team) ?? team;
     const overall = computeOverall(player.attributes, player.position);
-    const role = determineRole(overall, team.strength, player.nbaSeasonsPlayed, player.coachTrust);
+    const role = determineRole(overall, runtimeTeam.strength, player.nbaSeasonsPlayed, player.coachTrust);
 
     for (let i = 0; i < count; i++) {
-      const opp = schedule[(gamesPlayed + i) % schedule.length] ?? TEAMS[i % TEAMS.length];
-      const gameResult = simSingleGameWithBoxScore(player, team, opp, role, seasonYear);
+      const schedOpp = schedule[(gamesPlayed + i) % schedule.length] ?? TEAMS[i % TEAMS.length];
+      const opp = runtimeTeams.find(t => t.id === schedOpp.id) ?? schedOpp;
+      const gameResult = simSingleGameWithBoxScore(player, runtimeTeam, opp, role, seasonYear);
       addGameToLog(gameResult.playerLine);
       addRecentGameResult({ ...gameResult, gameNum: gamesPlayed + i + 1 });
       addNews({

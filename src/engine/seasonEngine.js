@@ -28,14 +28,17 @@ const ARCHETYPE_STAT_MODS = {
 
 export function determineRole(playerOverall, teamStrength, nbaSeasonsPlayed, coachTrust) {
   const trust = (coachTrust - 50) / 50;
-  // Tiny rookie adjustment — talent beats experience after year 1
-  const rookiePenalty = nbaSeasonsPlayed === 0 ? 2 : 0;
-  const adj = playerOverall + trust * 5 - rookiePenalty;
+  // Experience penalty: young players must earn their role over time.
+  // Year 0 (rookie): -4; Year 1: -2; Year 2+: 0
+  const expPenalty = nbaSeasonsPlayed === 0 ? 4 : nbaSeasonsPlayed === 1 ? 2 : 0;
+  const adj = playerOverall + trust * 5 - expPenalty;
+  // Tighter bands vs old code: a 94-OVR player on a 92-strength team lands "starter",
+  // not "star". A truly transcendent build (adj ≥ teamStrength + 10) still breaks through.
   if (adj >= teamStrength + 10) return 'franchise';
-  if (adj >= teamStrength + 2)  return 'star';
-  if (adj >= teamStrength - 8)  return 'starter';
-  if (adj >= teamStrength - 17) return 'sixthman';
-  if (adj >= teamStrength - 26) return 'rotation';
+  if (adj >= teamStrength + 3)  return 'star';
+  if (adj >= teamStrength - 6)  return 'starter';
+  if (adj >= teamStrength - 15) return 'sixthman';
+  if (adj >= teamStrength - 24) return 'rotation';
   return 'bench';
 }
 
@@ -47,7 +50,12 @@ function sRound(x) {
 
 function simGameLine(attrs, position, role, mpg, oppStrength, archetype = null) {
   const pw = POSITION_WEIGHTS[position];
-  const minFactor = mpg / 36;
+  // Draw actual minutes first so all production scales with the same realized value.
+  // This prevents a 40-min game from carrying a 6-pt line (and vice-versa).
+  const actualMin = Math.round(clamp(gaussian(mpg, 2.5), 2, 42));
+  const minFactor = actualMin / 36;
+  // How much more/less time than the nominal role MPG this game gives
+  const minScale = actualMin / Math.max(1, mpg);
   const oppFactor = 1 + (50 - oppStrength) * 0.006;
 
   const scoringRating =
@@ -63,7 +71,8 @@ function simGameLine(attrs, position, role, mpg, oppStrength, archetype = null) 
   const ROLE_FLOOR_PPG = { franchise: 16, star: 13, starter: 8, sixthman: 6, rotation: 4, bench: 2 };
   const ROLE_CEIL_PPG  = { franchise: 35, star: 27, starter: 20, sixthman: 15, rotation: 11, bench: 7 };
   const t = clamp((scoringRating - 40) / (99 - 40), 0, 1);
-  const basePPG = (ROLE_FLOOR_PPG[role] + t * (ROLE_CEIL_PPG[role] - ROLE_FLOOR_PPG[role])) * oppFactor;
+  // Scale expected scoring by realized minutes vs nominal MPG so stats correlate with time played
+  const basePPG = (ROLE_FLOOR_PPG[role] + t * (ROLE_CEIL_PPG[role] - ROLE_FLOOR_PPG[role])) * oppFactor * minScale;
 
   // Shooting %s
   const fgPct  = clamp(0.42 + (scoringRating - 65) * 0.0025, 0.33, 0.63);
@@ -114,8 +123,6 @@ function simGameLine(attrs, position, role, mpg, oppStrength, archetype = null) 
   const usage = ROLE_USAGE[role];
   const tovBase = usage * 5.5 * minFactor * (1 - attrs.basketballIQ / 99 * 0.45);
   const tov = Math.max(0, sRound(gaussian(tovBase, tovBase * 0.3)));
-
-  const actualMin = Math.round(clamp(gaussian(mpg, 2.5), 2, 42));
 
   return {
     min: actualMin, pts, reb, ast,
@@ -231,9 +238,11 @@ export function simLeaguePlayerStats(teams, season, playerEntry) {
                  : npc.isStarter ? 'starter'
                  : 'rotation';
 
-      // Stars must average 20+ PPG; franchise players 24+ at their floor
-      const NPC_PPG_FLOOR = { franchise: 24, star: 20, starter: 9, rotation: 3 };
-      const NPC_PPG_CEIL  = { franchise: 34, star: 28, starter: 18, rotation: 9 };
+      // PPG ranges re-calibrated so the best NPC franchise players score 24–28 PPG,
+      // making them competitive (but beatable) against a peak human player (~26–30 PPG).
+      // Previous ceiling of 34 made the NPC pool impossibly dominant for MVP contests.
+      const NPC_PPG_FLOOR = { franchise: 16, star: 12, starter: 6, rotation: 2 };
+      const NPC_PPG_CEIL  = { franchise: 28, star: 22, starter: 14, rotation: 8 };
       const ppgT = clamp((ovr - 55) / (97 - 55), 0, 1);
       const ppgBase = NPC_PPG_FLOOR[role] + ppgT * (NPC_PPG_CEIL[role] - NPC_PPG_FLOOR[role]);
       // Moderate variance so stars can hit 26-32 PPG at peak
@@ -259,10 +268,46 @@ export function simLeaguePlayerStats(teams, season, playerEntry) {
       // slotId is season-independent (team + slot index) so the roster screen can
       // always find the right stats regardless of which season the roster was generated for.
       const slotId = `${team.id}_slot_${slotIdx}`;
+      // isRookie: age ≤ 22 flags NPC players young enough to be first-year contributors.
+      // A separate elite rookie cohort is injected below to represent top draft picks.
+      const isRookie = npc.age <= 22;
       leaguePlayers.push({ id: npc.id, slotId, name: npc.name, team: team.id, pos: npc.pos,
-                           age: npc.age, ovr, ppg, rpg, apg, spg, bpg, gp, fgp, fg3p });
+                           age: npc.age, ovr, ppg, rpg, apg, spg, bpg, gp, fgp, fg3p, isRookie });
     });
   });
+
+  // ── Elite NPC rookie cohort ───────────────────────────────────────────────
+  // Represents the other top draft picks in this season's class.
+  // 4 players with realistic top-rookie stats (14–26 PPG) give ROY real competition
+  // without flooding the pool. Uses a seeded RNG so the cohort is deterministic per season.
+  // 6 elite NPC rookies — represents the top tier of a real draft class.
+  const ROOKIE_COHORT_SIZE = 6;
+  const _rngS = (seed, lo, hi) => {
+    const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    const t = x - Math.floor(x);
+    return lo + t * (hi - lo);
+  };
+  for (let ri = 0; ri < ROOKIE_COHORT_SIZE; ri++) {
+    const s = season * 41 + ri * 17;
+    const pos = ['PG','SG','SF','PF','C'][Math.floor(_rngS(s, 0, 5))];
+    // PPG range 14–28: the top rookie in the cohort averages around 24–26 PPG,
+    // realistic for a top-3 draft pick. True generational outliers are rare.
+    const ppg  = Math.round(_rngS(s + 1, 14, 28) * 10) / 10;
+    const rpg  = Math.round(_rngS(s + 2,  2, 10) * 10) / 10;
+    const apg  = Math.round(_rngS(s + 3,  1,  7) * 10) / 10;
+    const gp   = Math.min(82, Math.max(40, Math.round(_rngS(s + 4, 50, 82))));
+    leaguePlayers.push({
+      id: `npc_rookie_${season}_${ri}`, name: `Rook ${ri + 1}`,
+      team: teams[ri % teams.length]?.id ?? 'BOS',
+      pos, age: 21, ovr: Math.round(_rngS(s + 5, 62, 80)),
+      ppg, rpg, apg,
+      spg: Math.round(_rngS(s + 6, 0, 1.5) * 10) / 10,
+      bpg: Math.round(_rngS(s + 7, 0, 1.2) * 10) / 10,
+      gp, fgp: Math.round(_rngS(s + 8, 42, 52)),
+      fg3p: Math.round(_rngS(s + 9, 30, 42)),
+      isRookie: true,
+    });
+  }
 
   // Inject the real player (overwrite any matching entry)
   if (playerEntry) {
@@ -284,6 +329,8 @@ export function simLeaguePlayerStats(teams, season, playerEntry) {
       fgp: playerEntry.fgPct ?? 0,
       fg3p: playerEntry.fg3Pct ?? 0,
       isPlayer: true,
+      // Human player is a rookie when nbaSeasonsPlayed === 0
+      isRookie: (playerEntry.nbaSeasonsPlayed ?? 0) === 0,
     });
   }
 
@@ -291,59 +338,113 @@ export function simLeaguePlayerStats(teams, season, playerEntry) {
 }
 
 // ── Awards ───────────────────────────────────────────────────────────────────
+// Awards are now fully league-relative: the human player only wins when they
+// rank #1 (or inside the appropriate bucket) among all players in the league pool.
+//
+// Signature change (Fix 1): takes the full leaguePool returned by simLeaguePlayerStats
+// (which already includes the human player with isPlayer: true) plus the player's
+// prior nbaSeasons for MIP calculation.
+//
+// MIP limitation: NPC entries in the pool have no prior-season data, so MIP is
+// scoped to the human player only and uses their own nbaSeasons history.
 
-export function determineAwards(playerSeason, standings, playerTeamId, nbaSeasonsPlayed) {
+export function determineAwards(leaguePool, standings, playerTeamId, nbaSeasonsPlayed, playerNbaSeasons) {
   const awards = [];
-  const avg    = playerSeason.averages;
-  const gp     = playerSeason.gamesPlayed;
+
+  // Find the human player in the pool
+  const player = leaguePool.find(p => p.isPlayer);
+  if (!player) return awards;
+
   const teamWins = standings[playerTeamId]?.wins ?? 41;
 
-  // ROY — first NBA season, any notable performance
-  if (nbaSeasonsPlayed === 0 && gp >= 55) {
-    if (avg.pts >= 13 || avg.reb >= 8 || avg.ast >= 6) awards.push('ROY');
-    else if (avg.pts >= 10 && avg.ast >= 4) awards.push('ROY');
+  // Minimum GP qualifier for most individual awards
+  const MIN_GP = 55;
+  const qualified = leaguePool.filter(p => p.gp >= MIN_GP);
+
+  // ── Scoring functions ─────────────────────────────────────────────────────
+  // MVP score: production + win bonus for leading teams.
+  // RPG is capped at 18 to prevent the human player's inflated rebounding numbers
+  // (a pre-existing quirk in simGameLine's rebMult for big men) from dominating MVP
+  // relative to NPC players whose RPG is generated by a separate, realistic formula.
+  const MVP_RPG_CAP = 18;
+  function mvpScore(p) {
+    const wins = standings[p.team]?.wins ?? 41;
+    const winBonus = wins >= 50 ? 3 : wins >= 45 ? 1.5 : wins >= 38 ? 0.5 : 0;
+    return p.ppg + 0.25 * Math.min(p.rpg, MVP_RPG_CAP) + 0.5 * p.apg + winBonus;
   }
 
-  // MVP — 24+ PPG + good team, or pure dominance
-  if (gp >= 65) {
-    if (avg.pts >= 29 && teamWins >= 48) awards.push('MVP');
-    else if (avg.pts >= 26 && teamWins >= 52) awards.push('MVP');
-    else if (avg.pts >= 32) awards.push('MVP'); // unstoppable scorer
+  // General production score (All-NBA, All-Star ranking)
+  function prodScore(p) {
+    return p.ppg + 0.25 * Math.min(p.rpg, MVP_RPG_CAP) + 0.5 * p.apg;
   }
 
-  // DPOY
-  if (gp >= 65 && (avg.stl >= 2.0 || avg.blk >= 2.8)) awards.push('DPOY');
-  else if (gp >= 65 && avg.stl >= 1.7 && avg.blk >= 1.5) awards.push('DPOY');
-
-  // Stat titles
-  if (avg.pts >= 24 && gp >= 65) awards.push('Scoring Title');
-  if (avg.ast >= 9.5 && gp >= 65) awards.push('Assists Title');
-  if (avg.reb >= 11.0 && gp >= 65) awards.push('Rebounds Title');
-  if (avg.stl >= 2.0 && gp >= 65) awards.push('Steals Title');
-
-  // All-Star
-  if (avg.pts >= 16 || avg.reb >= 9 || avg.ast >= 7) awards.push('All-Star');
-  else if (avg.pts >= 12 && (avg.reb >= 6 || avg.ast >= 5)) awards.push('All-Star');
-
-  // All-NBA
-  if (avg.pts >= 24 && gp >= 65) awards.push('All-NBA 1st');
-  else if (avg.pts >= 19 && gp >= 65) awards.push('All-NBA 2nd');
-  else if (avg.pts >= 15 && gp >= 65) awards.push('All-NBA 3rd');
-
-  // All-Defense
-  if ((avg.stl >= 1.9 || avg.blk >= 2.1) && gp >= 65) awards.push('All-Defense 1st');
-  else if ((avg.stl >= 1.5 || avg.blk >= 1.7) && gp >= 65) awards.push('All-Defense 2nd');
-
-  // MIP — available from season 2 onwards, if big jump in ppg
-  if (nbaSeasonsPlayed >= 1 && avg.pts >= 16 && gp >= 65) {
-    if (Math.random() < 0.3) awards.push('MIP');
+  // Defensive score: steals + weighted blocks
+  function defScore(p) {
+    return p.spg + 1.5 * p.bpg;
   }
 
-  // Championship
+  // ── MVP — top-1 by mvpScore; team must be a real contender (≥42 wins) ─────
+  const mvpEligible = qualified.filter(p => (standings[p.team]?.wins ?? 0) >= 42);
+  const mvpSorted = [...mvpEligible].sort((a, b) => mvpScore(b) - mvpScore(a));
+  if (mvpSorted[0]?.isPlayer) awards.push('MVP');
+
+  // ── ROY — first NBA season; top-1 among all rookies in the pool ───────────
+  // The human player has isRookie: true when nbaSeasonsPlayed === 0 (set by
+  // simLeaguePlayerStats). NPC rookies are tagged by age ≤ 22 (proxy for year-1 players).
+  if (nbaSeasonsPlayed === 0) {
+    const rookies = leaguePool.filter(p => p.isRookie && p.gp >= 40);
+    const roySorted = [...rookies].sort((a, b) => prodScore(b) - prodScore(a));
+    if (roySorted[0]?.isPlayer) awards.push('ROY');
+  }
+
+  // ── DPOY — top-1 by defensive score ──────────────────────────────────────
+  const dpoySorted = [...qualified].sort((a, b) => defScore(b) - defScore(a));
+  if (dpoySorted[0]?.isPlayer) awards.push('DPOY');
+
+  // ── Stat titles — strict #1 in each category (min GP) ────────────────────
+  const sortBy = (key) => [...qualified].sort((a, b) => (b[key] ?? 0) - (a[key] ?? 0));
+  if (sortBy('ppg')[0]?.isPlayer) awards.push('Scoring Title');
+  if (sortBy('apg')[0]?.isPlayer) awards.push('Assists Title');
+  if (sortBy('rpg')[0]?.isPlayer) awards.push('Rebounds Title');
+  if (sortBy('spg')[0]?.isPlayer) awards.push('Steals Title');
+
+  // ── MIP — human player only (NPC pool lacks prior-season data) ────────────
+  // Eligible from season 2 onwards with a meaningful PPG jump; probabilistic
+  // because we can't rank NPCs by improvement.
+  if (nbaSeasonsPlayed >= 1 && playerNbaSeasons && player.gp >= MIN_GP) {
+    const prevSeason = playerNbaSeasons[playerNbaSeasons.length - 2];
+    const prevPpg = prevSeason?.averages?.pts ?? 0;
+    const improvement = player.ppg - prevPpg;
+    if (improvement >= 4) {
+      const mipChance = Math.min(0.55, improvement * 0.07);
+      if (Math.random() < mipChance) awards.push('MIP');
+    }
+  }
+
+  // ── All-NBA — rank buckets 1–5 / 6–10 / 11–15 by production score ────────
+  const allNBASorted = [...qualified].sort((a, b) => prodScore(b) - prodScore(a));
+  const playerRank = allNBASorted.findIndex(p => p.isPlayer);
+  if (playerRank >= 0 && playerRank < 5)        awards.push('All-NBA 1st');
+  else if (playerRank >= 5  && playerRank < 10) awards.push('All-NBA 2nd');
+  else if (playerRank >= 10 && playerRank < 15) awards.push('All-NBA 3rd');
+
+  // ── All-Defense — rank buckets 1–5 / 6–10 by defensive score ─────────────
+  const allDefSorted = [...qualified].sort((a, b) => defScore(b) - defScore(a));
+  const defRank = allDefSorted.findIndex(p => p.isPlayer);
+  if (defRank >= 0 && defRank < 5)       awards.push('All-Defense 1st');
+  else if (defRank >= 5 && defRank < 10) awards.push('All-Defense 2nd');
+
+  // ── All-Star — top ~24 by production score (min GP 25) ───────────────────
+  const allStarPool = leaguePool.filter(p => p.gp >= 25);
+  const allStarSorted = [...allStarPool].sort((a, b) => prodScore(b) - prodScore(a));
+  const allStarRank = allStarSorted.findIndex(p => p.isPlayer);
+  if (allStarRank >= 0 && allStarRank < 24) awards.push('All-Star');
+
+  // ── Championship — probabilistic based on team wins ───────────────────────
   const champChance = teamWins >= 62 ? 0.45 : teamWins >= 55 ? 0.22 : teamWins >= 50 ? 0.10 : 0;
   if (Math.random() < champChance) {
     awards.push('Championship');
-    if (avg.pts >= 22) awards.push('Finals MVP');
+    if (player.ppg >= 22) awards.push('Finals MVP');
   }
 
   return awards;
