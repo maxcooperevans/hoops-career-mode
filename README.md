@@ -31,7 +31,7 @@ Main Menu → Character Creation → College (1–4 seasons) → NBA Draft
          → NBA Career (up to 20 seasons) → Offseason → Retirement
 ```
 
-- **Character creation**: Choose name, position, archetype, and physical attributes. 290 extra points to customise on top of your archetype's defaults.
+- **Character creation**: Choose name, position, archetype, and physical attributes. 230 extra points to customise on top of your archetype's defaults.
 - **College**: Pick a school (prestige/playing time/development trade-off). Sim seasons, watch your draft stock climb, then declare.
 - **NBA Draft**: Live lottery animation, draft board, landing-spot reveal.
 - **Season dashboard**: Sim the full 82-game season in one click. View your stats, standings, league leaderboards, and news.
@@ -52,10 +52,11 @@ Main Menu → Character Creation → College (1–4 seasons) → NBA Draft
 
 ### Key constants to tweak
 
-**Make the game easier/harder to win ROY:**
+**Tune how many All-Stars / All-NBA players the pool produces:**
 ```js
 // src/engine/seasonEngine.js → determineAwards()
-if (avg.pts >= 13 || avg.reb >= 8 || avg.ast >= 6) awards.push('ROY');
+// Awards are now rank-based — change the rank bucket sizes (e.g. top 24 → top 28 for All-Star)
+if (allStarRank >= 0 && allStarRank < 24) awards.push('All-Star');
 ```
 
 **Player scoring ceiling:**
