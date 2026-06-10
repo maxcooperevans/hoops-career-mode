@@ -54,16 +54,7 @@ export function computeDraftStock(player) {
   return clamp(Math.round(stock), 20, 100);
 }
 
-// Map stock score to projected pick range string
-export function stockToPickRange(stock) {
-  if (stock >= 88) return 'Top 5 Pick';
-  if (stock >= 80) return 'Lottery Pick (Top 14)';
-  if (stock >= 70) return 'Mid-1st Round (15–30)';
-  if (stock >= 58) return 'Late 1st Round';
-  if (stock >= 45) return 'Second Round';
-  if (stock >= 32) return 'Undrafted (Training Camp)';
-  return 'Undrafted';
-}
+// stockToPickRange consolidated into draftEngine.js — import from there.
 
 // Generate hidden potential ceiling for each attribute
 export function generatePotential(attributes, archetype) {
@@ -108,13 +99,6 @@ export function applyOffseasonProgression(player, trainingFocus, minutesPlayed) 
   }
 
   return newAttrs;
-}
-
-export function heightBonus(heightIn) {
-  return (heightIn - 79) * 0.8;
-}
-export function wingspanBonus(wingspanIn, heightIn) {
-  return (wingspanIn - heightIn - 2.5) * 1.0;
 }
 
 // ── 2K-style physical attribute modifiers ──────────────────────────────────
@@ -176,24 +160,52 @@ export function describePhysicalModifiers(heightIn, weightLbs, wingspanIn) {
   return rows.filter(r => r.delta !== 0).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 }
 
-// Check if player should retire
+// Check if player should retire — probabilistic model driven by age, overall, and role.
+// Hard cap at 40 is a backstop only; weaker/declining players bow out earlier.
 export function shouldRetire(player) {
-  if (player.age < 33) return false;
+  const age = player.age;
+  if (age < 30) return false;
+  if (age >= 40) return true;
+
   const overall = computeOverall(player.attributes, player.position);
-  if (player.age >= 40) return true;
-  if (player.age >= 38 && overall < 65) return true;
-  if (player.age >= 36 && overall < 58) return Math.random() < 0.5;
-  if (player.age >= 34 && overall < 52) return Math.random() < 0.25;
-  return false;
+
+  // Pull role from most recent NBA season (rotation/bench players retire sooner)
+  const lastSeason = player.nbaSeasons?.[player.nbaSeasons.length - 1];
+  const role = lastSeason?.role ?? 'starter';
+
+  // Base probability: near-zero at 30, accelerating sharply after 33
+  // ~0% @30, ~2% @32, ~5% @34, ~10% @36, ~19% @38, ~26% @39
+  const yearsOver30 = age - 30;
+  const ageProb = 0.015 * yearsOver30
+                + 0.008 * Math.pow(Math.max(0, yearsOver30 - 3), 2);
+
+  // Overall modifier: high-overall players stay; declining players retire sooner
+  // ovrMod < 1 for elite (OVR > 68), > 1 for declining (OVR < 68)
+  const ovrMod = clamp(1.0 + (68 - overall) * 0.03, 0.4, 2.5);
+
+  // Role modifier: bench/rotation players exit much faster
+  const ROLE_MOD = {
+    franchise: 0.4, star: 0.6, starter: 0.9,
+    sixthman: 1.1, rotation: 1.5, bench: 2.0,
+  };
+  const roleMod = ROLE_MOD[role] ?? 1.0;
+
+  const prob = Math.min(0.88, ageProb * ovrMod * roleMod);
+  return Math.random() < prob;
 }
 
-// Compute injury risk for a season (0-1 probability)
+// Compute injury risk for a season (0–1 probability).
+// Flat floor (INJ_FLOOR) means even elite durability carries a small annual risk (~5%).
+// Curve is softer than the old version so high-durability builds still get hurt occasionally.
+const INJ_FLOOR    = 0.05;  // minimum annual risk even at durability 99
+const INJ_DUR_RATE = 0.003; // +0.3% per durability point below 100
+const INJ_AGE_RATE = 0.05;  // +5% relative risk per year above age 30
 export function injuryRisk(player) {
-  const durability = player.attributes.durability;
+  const durability = player.attributes.durability ?? 70;
   const age = player.age;
-  const ageFactor = age > 30 ? 1 + (age - 30) * 0.08 : 1.0;
-  const durFactor = (100 - durability) / 100;
-  return clamp(durFactor * ageFactor * 0.35, 0, 0.6);
+  const durBase = INJ_FLOOR + (100 - durability) * INJ_DUR_RATE;
+  const ageFactor = age > 30 ? 1 + (age - 30) * INJ_AGE_RATE : 1.0;
+  return clamp(durBase * ageFactor, 0.03, 0.55);
 }
 
 // Simulate an injury
