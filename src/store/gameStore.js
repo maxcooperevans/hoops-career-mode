@@ -2,6 +2,16 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { persist } from 'zustand/middleware';
 import { ROOKIE_SCALE, VETERAN_MINIMUM } from '../data/constants.js';
+import { TEAMS } from '../data/teams.js';
+
+// Inline gaussian + clamp so the store has no circular engine dependency.
+function _gaussian(mean, std) {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return mean + Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v) * std;
+}
+function _clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
 
 function createPlayer(data) {
   return {
@@ -58,6 +68,9 @@ export const useGameStore = create(
       currentGameEntry: null,
       tradeLog: [],
       recentGameResults: [],  // last N individual game results for box score viewing
+      // Runtime team strengths — seeded from TEAMS on new-game start and drifted
+      // each offseason. Older saves without this field default to TEAMS strengths.
+      teamStrengths: null,
 
       goTo: (screen) => set(s => { s.screen = screen; }),
 
@@ -67,6 +80,8 @@ export const useGameStore = create(
         s.seasonResults = null;
         s.pendingEvent = null;
         s.newsItems = [];
+        // Seed runtime team strengths from the TEAMS constant
+        s.teamStrengths = Object.fromEntries(TEAMS.map(t => [t.id, t.strength]));
         s.screen = 'COLLEGE';
       }),
 
@@ -186,6 +201,20 @@ export const useGameStore = create(
         s.player.attributes = newAttrs;
         s.player.age++;
         s.player.currentSeasonSimmed = false;
+
+        // Drift every team's strength by a bounded random walk each offseason.
+        // ±gaussian(0, 2.5), clamped 45–96, with 10% mean-reversion toward original
+        // so teams don't permanently run away. Young teams (youth > 60) get a +0.5 nudge.
+        const cur = s.teamStrengths ?? Object.fromEntries(TEAMS.map(t => [t.id, t.strength]));
+        const next = {};
+        TEAMS.forEach(t => {
+          const strength = cur[t.id] ?? t.strength;
+          const drift    = _gaussian(0, 2.5);
+          const revert   = (t.strength - strength) * 0.10; // mild pull toward baseline
+          const youthNudge = (t.youth ?? 50) > 60 ? 0.5 : 0;
+          next[t.id] = _clamp(Math.round(strength + drift + revert + youthNudge), 45, 96);
+        });
+        s.teamStrengths = next;
       }),
 
       applyInjury: (injury) => set(s => {
@@ -229,6 +258,7 @@ export const useGameStore = create(
             league: s.league,
             seasonResults: s.seasonResults,
             newsItems: s.newsItems,
+            teamStrengths: s.teamStrengths ?? null,
           }),
         };
       }),
@@ -242,6 +272,8 @@ export const useGameStore = create(
         s.league = snap.league;
         s.seasonResults = snap.seasonResults;
         s.newsItems = snap.newsItems;
+        // Older saves without teamStrengths default gracefully to null (TEAMS strengths used as fallback)
+        s.teamStrengths = snap.teamStrengths ?? null;
         s.pendingEvent = null;
       }),
 
@@ -254,6 +286,7 @@ export const useGameStore = create(
           seasonResults: st.seasonResults,
           newsItems: st.newsItems,
           saves: st.saves,
+          teamStrengths: st.teamStrengths ?? null,
         }, null, 2);
       },
 
@@ -265,6 +298,8 @@ export const useGameStore = create(
         s.seasonResults = data.seasonResults ?? null;
         s.newsItems = data.newsItems ?? [];
         if (data.saves) s.saves = data.saves;
+        // Older exports without teamStrengths fall back gracefully
+        s.teamStrengths = data.teamStrengths ?? null;
         s.pendingEvent = null;
       }),
 
@@ -319,6 +354,7 @@ export const useGameStore = create(
         s.pendingEvent = null;
         s.newsItems = [];
         s.playoffState = null;
+        s.teamStrengths = null;
       }),
     })),
     {
